@@ -44,9 +44,8 @@ class Usuario extends Authenticatable
     ];
 
     // Si tu columna de contraseña se llama distinto a 'password':
-    public function setPasswordAttribute($value)
+    public function setContrasenaAttribute($value)
     {
-        // Encripta la contraseña al asignarla
         $this->attributes['contrasena'] = bcrypt($value);
     }
 
