@@ -29,8 +29,8 @@ class EntradaDato extends Model
      * Relación con Dispositivo
      */
     public function dispositivo()
-    {
-        return $this->belongsTo(Dispositivo::class, 'id_dispositivo', 'id_dispositivo');
-    }
+{
+    return $this->belongsTo(Dispositivo::class, 'id_dispositivo', 'numero_serie');
+}
 }
 

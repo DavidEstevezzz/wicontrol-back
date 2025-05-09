@@ -91,4 +91,15 @@ class Granja extends Model
             'id_instalacion'     // PK en Instalacion
         );
     }
+
+    public function entradasDatos()
+{
+    // Usar una subconsulta para obtener los números de serie de los dispositivos de esta granja
+    return EntradaDato::whereIn('id_dispositivo', function($query) {
+        $query->select('d.numero_serie')
+              ->from('tb_dispositivo as d')
+              ->join('tb_instalacion as i', 'd.id_instalacion', '=', 'i.id_instalacion')
+              ->where('i.numero_rega', $this->numero_rega);
+    });
+}
 }
