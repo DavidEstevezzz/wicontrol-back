@@ -2,10 +2,47 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\ApiController;
 
+use App\Http\Controllers\ApiController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CamadaController;
+use App\Http\Controllers\DispositivoController;
+use App\Http\Controllers\EmpresaController;
+use App\Http\Controllers\EntradaDatoController;
+use App\Http\Controllers\GranjaController;
+use App\Http\Controllers\InstalacionController;
+use App\Http\Controllers\PesoCobbController;
+use App\Http\Controllers\PesoRossController;
+use App\Http\Controllers\UsuarioController;
+
+/*
+| Test de conexión
+*/
 Route::get('/controller-test', [ApiController::class, 'testConnection']);
 
-Route::get('/user', function (Request $request) {
+/*
+| Autenticación
+*/
+Route::post('/login',  [AuthController::class, 'login']);
+Route::post('/logout', [AuthController::class, 'logout'])
+     ->middleware('auth:sanctum');
+
+/*
+| Usuario autenticado
+*/
+Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
-})->middleware('auth:sanctum');
+});
+
+/*
+| Recursos RESTful
+*/
+Route::apiResource('camadas',         CamadaController::class);
+Route::apiResource('dispositivos',    DispositivoController::class);
+Route::apiResource('empresas',        EmpresaController::class);
+Route::apiResource('entradas-datos',  EntradaDatoController::class);
+Route::apiResource('granjas',         GranjaController::class);
+Route::apiResource('instalaciones',   InstalacionController::class);
+Route::apiResource('peso-cobb',       PesoCobbController::class);
+Route::apiResource('peso-ross',       PesoRossController::class);
+Route::apiResource('usuarios',        UsuarioController::class);
