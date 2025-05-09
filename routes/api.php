@@ -14,10 +14,12 @@ use App\Http\Controllers\InstalacionController;
 use App\Http\Controllers\PesoCobbController;
 use App\Http\Controllers\PesoRossController;
 use App\Http\Controllers\UsuarioController;
+use App\Http\Controllers\DashboardController;
 
 /*
 | Test de conexión
 */
+
 Route::get('/controller-test', [ApiController::class, 'testConnection']);
 
 /*
@@ -25,7 +27,7 @@ Route::get('/controller-test', [ApiController::class, 'testConnection']);
 */
 Route::post('/login',  [AuthController::class, 'login']);
 Route::post('/logout', [AuthController::class, 'logout'])
-     ->middleware('auth:sanctum');
+    ->middleware('auth:sanctum');
 
 /*
 | Usuario autenticado
@@ -46,3 +48,5 @@ Route::apiResource('instalaciones',   InstalacionController::class);
 Route::apiResource('peso-cobb',       PesoCobbController::class);
 Route::apiResource('peso-ross',       PesoRossController::class);
 Route::apiResource('usuarios',        UsuarioController::class);
+Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate']);
+Route::get('/dashboard', [DashboardController::class, 'stats']);

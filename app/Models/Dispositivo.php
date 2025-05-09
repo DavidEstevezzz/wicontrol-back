@@ -88,6 +88,11 @@ class Dispositivo extends Model
         return $this->belongsTo(Instalacion::class, 'id_instalacion');
     }
 
+    public function entradasDatos()
+    {
+        return $this->hasMany(EntradaDato::class, 'id_dispositivo', 'id_dispositivo');
+    }
+
     public function camadas()
     {
         return $this->belongsToMany(

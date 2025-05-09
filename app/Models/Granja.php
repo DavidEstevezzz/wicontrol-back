@@ -69,4 +69,26 @@ class Granja extends Model
             'id_usuario'                     // FK en pivot hacia el modelo Usuario
         );
     }
+    public function camadas()
+    {
+        return $this->hasMany(Camada::class, 'codigo_granja', 'numero_rega');
+    }
+
+    public function instalaciones()
+    {
+        return $this->hasMany(Instalacion::class, 'codigo_granja', 'numero_rega');
+    }
+
+    public function dispositivos()
+    {
+        // a través de instalaciones
+        return $this->hasManyThrough(
+            Dispositivo::class,
+            Instalacion::class,
+            'codigo_granja',     // FK en tb_instalacion
+            'id_instalacion',    // FK en tb_dispositivo
+            'numero_rega',       // PK local
+            'id_instalacion'     // PK en Instalacion
+        );
+    }
 }

@@ -96,4 +96,18 @@ class UsuarioController extends Controller
 
         return response()->json(null, 204);
     }
+
+    /**
+     * Activar (dar de alta) un usuario.
+     */
+    public function activate(Usuario $usuario)
+    {
+        $usuario->alta = 1;
+        $usuario->save();
+
+        return response()->json([
+            'message' => 'Usuario activado correctamente',
+            'usuario' => $usuario
+        ]);
+    }
 }
