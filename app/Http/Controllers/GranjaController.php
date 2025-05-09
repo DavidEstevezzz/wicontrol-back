@@ -106,38 +106,39 @@ class GranjaController extends Controller
      * @return \Illuminate\Http\JsonResponse
      */
     public function getTemperaturaMedia(Request $request, $numeroRega)
-    {
-        // Validar parámetros
-        $validator = Validator::make($request->all(), [
-            'fecha_inicio' => 'required|date',
-            'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
-            'formato' => 'nullable|in:diario,total',  // Formato de respuesta: media diaria o media total
+{
+    // Validar parámetros
+    $validator = Validator::make($request->all(), [
+        'fecha_inicio' => 'required|date',
+        'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
+        'formato' => 'nullable|in:diario,total',  // Formato de respuesta: media diaria o media total
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    // Obtener parámetros
+    $fechaInicio = $request->input('fecha_inicio');
+    $fechaFin = $request->input('fecha_fin');
+    $formato = $request->input('formato', 'diario'); // Por defecto, formato diario
+
+    // Buscar la granja
+    $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
+    
+    // ID constante para el sensor de temperatura ambiente
+    $SENSOR_TEMP_AMBIENTE = 6;
+    
+    // Obtener IDs de dispositivos de la granja
+    $dispositivos = $granja->dispositivos()->pluck('numero_serie')->toArray();
+    
+    // Si no hay dispositivos, devolver respuesta vacía
+    if (empty($dispositivos)) {
+        return response()->json([
+            'message' => 'No se encontraron dispositivos para esta granja',
+            'data' => []
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        // Obtener parámetros
-        $fechaInicio = $request->input('fecha_inicio');
-        $fechaFin = $request->input('fecha_fin');
-        $formato = $request->input('formato', 'diario'); // Por defecto, formato diario
-
-        // Buscar la granja
-        $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
-        
-        // ID constante para el sensor de temperatura ambiente
-        $SENSOR_TEMP_AMBIENTE = 6;
-        
-        // Obtener IDs de dispositivos de la granja
-        $dispositivos = $granja->dispositivos()->pluck('numero_serie')->toArray();
-        
-        if (empty($dispositivos)) {
-            return response()->json([
-                'message' => 'No se encontraron dispositivos para esta granja',
-                'data' => []
-            ]);
-        }
+    }
 
         // Consulta base para las lecturas de temperatura
         $query = EntradaDato::whereIn('id_dispositivo', $dispositivos)
