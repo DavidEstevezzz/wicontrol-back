@@ -40,13 +40,28 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 | Recursos RESTful
 */
 Route::apiResource('camadas',         CamadaController::class);
+
 Route::apiResource('dispositivos',    DispositivoController::class);
+
 Route::apiResource('empresas',        EmpresaController::class);
+
 Route::apiResource('entradas-datos',  EntradaDatoController::class);
+
 Route::apiResource('granjas',         GranjaController::class);
+Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
+
 Route::apiResource('instalaciones',   InstalacionController::class);
+
 Route::apiResource('peso-cobb',       PesoCobbController::class);
+
 Route::apiResource('peso-ross',       PesoRossController::class);
+
 Route::apiResource('usuarios',        UsuarioController::class);
 Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate']);
+
 Route::get('/dashboard', [DashboardController::class, 'stats']);
+Route::get('/granjas/{numeroRega}/dashboard', [GranjaController::class, 'dashboard']);
+
+
+
+
