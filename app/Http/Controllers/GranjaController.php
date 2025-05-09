@@ -107,84 +107,58 @@ class GranjaController extends Controller
      */
     public function getTemperaturaMedia(Request $request, $numeroRega)
 {
-    // Validar parámetros
-    $validator = Validator::make($request->all(), [
+    $data = $request->validate([
         'fecha_inicio' => 'required|date',
-        'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
-        'formato' => 'nullable|in:diario,total',  // Formato de respuesta: media diaria o media total
+        'fecha_fin'    => 'required|date|after_or_equal:fecha_inicio',
+        'formato'      => 'nullable|in:diario,total',
     ]);
 
-    if ($validator->fails()) {
-        return response()->json(['errors' => $validator->errors()], 422);
-    }
+    $granja = Granja::where('numero_rega', $numeroRega)
+                    ->firstOrFail();
 
-    // Obtener parámetros
-    $fechaInicio = $request->input('fecha_inicio');
-    $fechaFin = $request->input('fecha_fin');
-    $formato = $request->input('formato', 'diario'); // Por defecto, formato diario
+    $SENSOR = 6;
 
-    // Buscar la granja
-    $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
-    
-    // ID constante para el sensor de temperatura ambiente
-    $SENSOR_TEMP_AMBIENTE = 6;
-    
-    // Obtener IDs de dispositivos de la granja
-    $dispositivos = $granja->dispositivos()->pluck('numero_serie')->toArray();
-    
-    // Si no hay dispositivos, devolver respuesta vacía
-    if (empty($dispositivos)) {
+    // Base query sobre hasManyThrough
+    $query = $granja->entradasDatos()
+                    ->where('id_sensor', $SENSOR)
+                    ->whereBetween('fecha', [
+                        $data['fecha_inicio'],
+                        $data['fecha_fin']
+                    ]);
+
+    if ($data['formato'] === 'total') {
+        $media = $query->avg('valor');
         return response()->json([
-            'message' => 'No se encontraron dispositivos para esta granja',
-            'data' => []
+            'granja'              => $granja->nombre,
+            'numero_rega'         => $numeroRega,
+            'fecha_inicio'        => $data['fecha_inicio'],
+            'fecha_fin'           => $data['fecha_fin'],
+            'temperatura_media'   => round($media, 2),
+            'unidad'              => '°C',
+            'lecturas_totales'    => $query->count(),
         ]);
     }
 
-        // Consulta base para las lecturas de temperatura
-        $query = EntradaDato::whereIn('id_dispositivo', $dispositivos)
-            ->where('id_sensor', $SENSOR_TEMP_AMBIENTE)
-            ->whereBetween('fecha', [$fechaInicio, $fechaFin])
-            ->where('valor', '>', -50) // Filtrar lecturas inválidas (opcional)
-            ->where('valor', '<', 60); // Filtrar lecturas inválidas (opcional)
+    // -> formato diario:
+    $diario = $query->select(
+            DB::raw('DATE(fecha) as dia'),
+            DB::raw('ROUND(AVG(valor),2) as temperatura_media'),
+            DB::raw('COUNT(*) as lecturas')
+        )
+        ->groupBy('dia')
+        ->orderBy('dia')
+        ->get();
 
-        // Formatear resultados según el parámetro 'formato'
-        if ($formato === 'total') {
-            // Calcular media total del período
-            $mediaTotal = $query->avg('valor');
-            
-            $result = [
-                'granja' => $granja->nombre,
-                'numero_rega' => $numeroRega,
-                'fecha_inicio' => $fechaInicio,
-                'fecha_fin' => $fechaFin,
-                'temperatura_media' => round($mediaTotal, 2),
-                'unidad' => '°C',
-                'lecturas_totales' => $query->count()
-            ];
-        } else {
-            // Calcular media diaria
-            $mediaDiaria = $query->select(
-                DB::raw('DATE(fecha) as dia'),
-                DB::raw('ROUND(AVG(valor), 2) as temperatura_media'),
-                DB::raw('COUNT(*) as lecturas')
-            )
-            ->groupBy('dia')
-            ->orderBy('dia')
-            ->get();
-            
-            $result = [
-                'granja' => $granja->nombre,
-                'numero_rega' => $numeroRega,
-                'fecha_inicio' => $fechaInicio,
-                'fecha_fin' => $fechaFin,
-                'unidad' => '°C',
-                'datos_diarios' => $mediaDiaria,
-                'lecturas_totales' => $mediaDiaria->sum('lecturas')
-            ];
-        }
-
-        return response()->json($result);
-    }
+    return response()->json([
+        'granja'            => $granja->nombre,
+        'numero_rega'       => $numeroRega,
+        'fecha_inicio'      => $data['fecha_inicio'],
+        'fecha_fin'         => $data['fecha_fin'],
+        'unidad'            => '°C',
+        'datos_diarios'     => $diario,
+        'lecturas_totales'  => $diario->sum('lecturas'),
+    ]);
+}
 
     
 }
