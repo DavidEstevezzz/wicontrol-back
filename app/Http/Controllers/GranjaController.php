@@ -6,6 +6,7 @@ use App\Models\Granja;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use App\Models\EntradaDato;
 
 class GranjaController extends Controller
 {
@@ -98,173 +99,91 @@ class GranjaController extends Controller
 
 
     /**
-     * Retorna la media de valores del sensor 2 para cada dispositivo
-     * de una granja dada y rango de fechas.
+     * Calcular la temperatura media para una granja en un rango de fechas
+     * 
+     * @param Request $request
+     * @param string $numeroRega
+     * @return \Illuminate\Http\JsonResponse
      */
-    public function getPesoPorGranja(Request $request)
+    public function getTemperaturaMedia(Request $request, $numeroRega)
     {
-        // 1) Validamos la entrada
-        $v = Validator::make($request->all(), [
-            'numeroREGA' => 'required|string',
-            'startDate'  => 'required|date',
-            'endDate'    => 'required|date|after_or_equal:startDate',
+        // Validar parámetros
+        $validator = Validator::make($request->all(), [
+            'fecha_inicio' => 'required|date',
+            'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
+            'formato' => 'nullable|in:diario,total',  // Formato de respuesta: media diaria o media total
         ]);
 
-        if ($v->fails()) {
-            return response()->json([
-                'errors' => $v->errors()
-            ], 422);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $numeroREGA = $request->input('numeroREGA');
-        $startDate  = $request->input('startDate');
-        $endDate    = $request->input('endDate');
+        // Obtener parámetros
+        $fechaInicio = $request->input('fecha_inicio');
+        $fechaFin = $request->input('fecha_fin');
+        $formato = $request->input('formato', 'diario'); // Por defecto, formato diario
 
-        // 2) Construimos la consulta con el Query Builder
-        $result = DB::table('tb_dispositivo as d')
-            ->join('tb_instalacion as i', 'i.id_instalacion', '=', 'd.id_instalacion')
-            ->leftJoin('tb_entrada_dato as ed', function($join) use ($startDate, $endDate) {
-                $join->on('ed.id_dispositivo', '=', 'd.numero_serie')
-                     ->where('ed.id_sensor', 2)
-                     ->where('ed.fecha', '>=', $startDate)
-                     ->where('ed.fecha', '<',  $endDate)
-                     ->where('ed.valor', '>', 45);
-            })
-            ->select([
-                'd.numero_serie as id_dispositivo',
-                DB::raw("COALESCE(ROUND(AVG(ed.valor), 2), 0) as media")
-            ])
-            ->where('i.numero_rega', $numeroREGA)
-            ->groupBy('d.numero_serie')
-            ->orderBy('d.numero_serie')
+        // Buscar la granja
+        $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
+        
+        // ID constante para el sensor de temperatura ambiente
+        $SENSOR_TEMP_AMBIENTE = 6;
+        
+        // Obtener IDs de dispositivos de la granja
+        $dispositivos = $granja->dispositivos()->pluck('numero_serie')->toArray();
+        
+        if (empty($dispositivos)) {
+            return response()->json([
+                'message' => 'No se encontraron dispositivos para esta granja',
+                'data' => []
+            ]);
+        }
+
+        // Consulta base para las lecturas de temperatura
+        $query = EntradaDato::whereIn('id_dispositivo', $dispositivos)
+            ->where('id_sensor', $SENSOR_TEMP_AMBIENTE)
+            ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+            ->where('valor', '>', -50) // Filtrar lecturas inválidas (opcional)
+            ->where('valor', '<', 60); // Filtrar lecturas inválidas (opcional)
+
+        // Formatear resultados según el parámetro 'formato'
+        if ($formato === 'total') {
+            // Calcular media total del período
+            $mediaTotal = $query->avg('valor');
+            
+            $result = [
+                'granja' => $granja->nombre,
+                'numero_rega' => $numeroRega,
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin,
+                'temperatura_media' => round($mediaTotal, 2),
+                'unidad' => '°C',
+                'lecturas_totales' => $query->count()
+            ];
+        } else {
+            // Calcular media diaria
+            $mediaDiaria = $query->select(
+                DB::raw('DATE(fecha) as dia'),
+                DB::raw('ROUND(AVG(valor), 2) as temperatura_media'),
+                DB::raw('COUNT(*) as lecturas')
+            )
+            ->groupBy('dia')
+            ->orderBy('dia')
             ->get();
+            
+            $result = [
+                'granja' => $granja->nombre,
+                'numero_rega' => $numeroRega,
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin,
+                'unidad' => '°C',
+                'datos_diarios' => $mediaDiaria,
+                'lecturas_totales' => $mediaDiaria->sum('lecturas')
+            ];
+        }
 
-        // 3) Devolvemos JSON
         return response()->json($result);
     }
 
-    /**
-     * Devuelve el dashboard de una granja, con datos de peso, temperatura y humedad.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  string  $numeroRega
-     * @return \Illuminate\Http\JsonResponse
-     */
-    public function dashboard(Request $request, $numeroRega)
-    {
-        // 0) Validar entrada
-        $data = $request->validate([
-            'startDate' => 'required|date',
-            'endDate'   => 'required|date',
-            'cv'        => 'nullable|numeric',
-        ]);
-
-        $start = $data['startDate'];
-        $end   = $data['endDate'];
-        $cv    = $data['cv'] ?? null;
-
-        // 1) Cargar la granja con sus dispositivos y sus lecturas en el rango
-        $granja = Granja::with(['dispositivos.entradasDatos' => function($q) use ($start, $end) {
-            $q->whereBetween('fecha', [$start, $end]);
-        }])->findOrFail($numeroRega);
-
-        $deviceIds = $granja->dispositivos->pluck('id_dispositivo')->all();
-
-        // 2) Camada activa en naves 'A%'
-        $camada = $granja->camadas()
-            ->where('alta', 1)
-            ->where('id_naves', 'like', 'A%')
-            ->latest('fecha_hora_inicio')
-            ->first();
-
-        // 3) Pesadas y promedio de hoy (sensor = 2)
-        $pesadasHoy = DB::table('tb_entrada_dato')
-            ->whereIn('id_dispositivo', $deviceIds)
-            ->where('id_sensor', 2)
-            ->whereBetween('fecha', [ now()->subDay(), now() ])
-            ->count();
-
-        $mediaHoy = DB::table('tb_entrada_dato')
-            ->whereIn('id_dispositivo', $deviceIds)
-            ->where('id_sensor', 2)
-            ->whereBetween('fecha', [ now()->subDay(), now() ])
-            ->avg('valor');
-
-        // 4) Serie de media diaria últimos 7 días
-        $serie7dias = DB::table('tb_entrada_dato')
-            ->selectRaw('UNIX_TIMESTAMP(fecha)*1000 as t, AVG(valor) as avg')
-            ->whereIn('id_dispositivo', $deviceIds)
-            ->where('id_sensor', 2)
-            ->whereBetween('fecha', [ now()->subDays(7), now() ])
-            ->groupBy(DB::raw('DATE(fecha)'))
-            ->orderBy('t')
-            ->get()
-            ->map(fn($r) => [ (int)$r->t, round($r->avg, 2) ]);
-
-        // 5) Coeficiente de variación día (sensor = 2)
-        $coefVariacion = DB::table('tb_entrada_dato')
-            ->selectRaw('(STDDEV_SAMP(valor)/AVG(valor))*100 as cv')
-            ->whereIn('id_dispositivo', $deviceIds)
-            ->where('id_sensor', 2)
-            ->whereBetween('fecha', [ now()->subDay(), now() ])
-            ->value('cv');
-
-        // 6) Histograma 6h (sensor = 2)
-        $histograma6h = DB::table('tb_entrada_dato')
-            ->selectRaw('FLOOR(UNIX_TIMESTAMP(fecha)/21600)*21600*1000 as t, COUNT(*) as count')
-            ->whereIn('id_dispositivo', $deviceIds)
-            ->where('id_sensor', 2)
-            ->whereBetween('fecha', [$start, $end])
-            ->groupBy('t')
-            ->orderBy('t')
-            ->get()
-            ->map(fn($r) => [ (int)$r->t, (int)$r->count ]);
-
-        // Helpers para series y rangos
-        $makeSeriesAndRanges = function(int $sensorId) use ($deviceIds, $start, $end) {
-            $rows = DB::table('tb_entrada_dato')
-                ->selectRaw('UNIX_TIMESTAMP(fecha)*1000 as t, AVG(valor) as avg, MIN(valor) as min, MAX(valor) as max')
-                ->whereIn('id_dispositivo', $deviceIds)
-                ->where('id_sensor', $sensorId)
-                ->whereBetween('fecha', [$start, $end])
-                ->groupBy(DB::raw('DATE(fecha)'))
-                ->orderBy('t')
-                ->get();
-
-            return [
-                'series' => $rows->map(fn($r) => [ (int)$r->t, round($r->avg, 2) ]),
-                'ranges' => $rows->map(fn($r) => [ (int)$r->t, round($r->min, 2), round($r->max, 2) ]),
-            ];
-        };
-
-        // 7) Temperatura ambiente (sensor = 6)
-        $tempAmbData = $makeSeriesAndRanges(6);
-
-        // 8) Humedad ambiente (sensor = 5)
-        $humAmbData = $makeSeriesAndRanges(5);
-
-        // 9) Temperatura suelo/camada (sensor = 12)
-        $tempSueloData = $makeSeriesAndRanges(12);
-
-        // 10) Humedad suelo/camada (sensor = 13)
-        $humSueloData = $makeSeriesAndRanges(13);
-
-        // Responder en JSON
-        return response()->json([
-            'camada'            => $camada,
-            'pesadasHoy'        => $pesadasHoy,
-            'mediaHoy'          => round($mediaHoy, 2),
-            'serie7dias'        => $serie7dias,
-            'coefVariacion'     => round($coefVariacion, 2),
-            'histograma6h'      => $histograma6h,
-            'tempAmbSeries'     => $tempAmbData['series'],
-            'tempAmbRanges'     => $tempAmbData['ranges'],
-            'humAmbSeries'      => $humAmbData['series'],
-            'humAmbRanges'      => $humAmbData['ranges'],
-            'tempSueloSeries'   => $tempSueloData['series'],
-            'tempSueloRanges'   => $tempSueloData['ranges'],
-            'humSueloSeries'    => $humSueloData['series'],
-            'humSueloRanges'    => $humSueloData['ranges'],
-        ]);
-    }
+    
 }

@@ -61,6 +61,8 @@ Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate
 
 Route::get('/dashboard', [DashboardController::class, 'stats']);
 Route::get('/granjas/{numeroRega}/dashboard', [GranjaController::class, 'dashboard']);
+Route::get('/granjas/{numeroRega}/temperatura-media', [GranjaController::class, 'getTemperaturaMedia']);
+
 
 
 

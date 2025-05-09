@@ -90,8 +90,9 @@ class Dispositivo extends Model
 
     public function entradasDatos()
     {
-        return $this->hasMany(EntradaDato::class, 'id_dispositivo', 'id_dispositivo');
+        return $this->hasMany(EntradaDato::class, 'id_dispositivo', 'numero_serie');
     }
+
 
     public function camadas()
     {

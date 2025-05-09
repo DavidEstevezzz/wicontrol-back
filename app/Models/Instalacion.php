@@ -16,4 +16,9 @@ class Instalacion extends Model
         'alta',
         'id_nave'
     ];
+
+    public function granja()
+    {
+        return $this->belongsTo(Granja::class, 'numero_rega', 'numero_rega');
+    }
 }
