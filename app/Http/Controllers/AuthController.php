@@ -16,6 +16,13 @@ class AuthController extends Controller
         'password' => 'required',
     ]);
 
+
+    dd([
+      'all_input'       => $request->all(),
+      'email_field'     => $request->email,
+      'password_field'  => $request->password,
+    ]);
+    
     $user = Usuario::where('email', $request->email)->first();
 
     // Si no hay usuario con ese email o la contraseña no coincide
