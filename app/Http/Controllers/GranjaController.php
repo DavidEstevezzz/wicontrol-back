@@ -170,5 +170,7 @@ public function getByEmpresa(int $empresa): JsonResponse
 
         return response()->json($granjas, Response::HTTP_OK);
     }
+
+    
     
 }
