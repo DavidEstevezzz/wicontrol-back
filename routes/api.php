@@ -49,7 +49,14 @@ Route::delete ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class,
 //   - fecha=YYYY-MM-DD    (obligatorio)  
 //   - coefHomogeneidad=0.10 (opcional)
 Route::get('camadas/{camada}/pesadas', [CamadaController::class, 'calcularPesadasPorDia']);
-
+Route::get(
+    'camadas/{camada}/dispositivos/{disp}/pesadas-rango',
+    [CamadaController::class, 'pesadasRango']
+);
+Route::get(
+    'camadas/{camada}/dispositivos',
+    [CamadaController::class, 'getDispositivosByCamada']
+);
 Route::apiResource('dispositivos',    DispositivoController::class);
 
 Route::apiResource('empresas',        EmpresaController::class);
