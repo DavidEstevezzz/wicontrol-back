@@ -397,6 +397,11 @@ class CamadaController extends Controller
         ], Response::HTTP_BAD_REQUEST);
     }
 
+    // ← CAMBIO: cargar el dispositivo para obtener su número de serie
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    Log::info("Número de serie del dispositivo: {$serie}");
+
     // 3. Preparar iteración diaria
     $inicio = Carbon::parse($fi);
     $fin    = Carbon::parse($ff);
@@ -416,8 +421,8 @@ class CamadaController extends Controller
         $pesoRef = $this->getPesoReferencia($camada, $edadDias);
         Log::info("  Peso referencia: {$pesoRef}");
 
-        // 6. Lecturas del dispositivo ese día
-        $lecturas = EntradaDato::where('id_dispositivo', $dispId)
+        // 6. Lecturas del dispositivo ese día (usar número de serie)
+        $lecturas = EntradaDato::where('id_dispositivo', $serie)         // ← CAMBIO
             ->whereDate('fecha', $d)
             ->where('id_sensor', 2)
             ->get()
@@ -426,7 +431,7 @@ class CamadaController extends Controller
 
         // 7. Filtrar por ±20% del peso ideal
         $consideradas = $lecturas
-            ->filter(fn($v) => abs($v - $pesoRef) / $pesoRef <= 0.20)
+            ->filter(fn($v) => $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20)
             ->values();
         Log::info("  Después de ±20% ideal, quedan: " . $consideradas->count());
 
@@ -463,15 +468,17 @@ class CamadaController extends Controller
         Log::info("  Coef. variación diario (%): {$cv}");
 
         // 12. Reconstruir lecturas con fecha/hora originales (solo aceptadas)
-        $pesadas = EntradaDato::where('id_dispositivo', $dispId)
+        $pesadas = EntradaDato::where('id_dispositivo', $serie)          // ← CAMBIO
             ->whereDate('fecha', $d)
             ->where('id_sensor', 2)
             ->get(['valor', 'fecha'])
             ->filter(function ($e) use ($pesoRef, $mediaGlobal, $coef) {
                 $v = (float)$e->valor;
-                return abs($v - $pesoRef) / $pesoRef <= 0.20
+                return $pesoRef > 0
+                    && abs($v - $pesoRef) / $pesoRef <= 0.20
                     && (is_null($coef)
-                        || abs($v - $mediaGlobal) / ($mediaGlobal ?: 1) <= $coef);
+                        || ($mediaGlobal > 0
+                            && abs($v - $mediaGlobal) / $mediaGlobal <= $coef));
             })
             ->map(function ($e) {
                 return [
@@ -510,6 +517,7 @@ class CamadaController extends Controller
 
     return response()->json($result, Response::HTTP_OK);
 }
+
 
 
     /**
