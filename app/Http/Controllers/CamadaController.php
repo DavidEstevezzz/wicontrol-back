@@ -12,6 +12,8 @@ use App\Models\EntradaDato;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+
 
 class CamadaController extends Controller
 {
@@ -259,12 +261,12 @@ class CamadaController extends Controller
 public function calcularPesadasPorDia(int $camadaId, string $fecha, ?float $coefHomogeneidad = null): JsonResponse
 {
 
-    \Log::info('calcularPesadasPorDia llamado con:', [
+    Log::info('calcularPesadasPorDia llamado con:', [
         'camadaId' => $camadaId,
         'fecha' => $fecha,
         'coefHomogeneidad' => $coefHomogeneidad
     ]);
-    
+
     // 1. Cargar la camada y referencias
     $camada    = Camada::findOrFail($camadaId);
     $edadDias  = Carbon::parse($camada->fecha_hora_inicio)
