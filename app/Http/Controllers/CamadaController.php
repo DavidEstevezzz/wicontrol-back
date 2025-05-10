@@ -260,93 +260,90 @@ class CamadaController extends Controller
  */
 public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
 {
-    // Obtener parámetros de la consulta
-    $fecha = $request->query('fecha');
-    $coefHomogeneidad = $request->has('coefHomogeneidad') ? (float) $request->query('coefHomogeneidad') : null;
+    // 1. Parámetros
+    $fecha             = $request->query('fecha');
+    $coefHomogeneidad  = $request->has('coefHomogeneidad')
+        ? (float) $request->query('coefHomogeneidad')
+        : null;
 
-    Log::info("Calculando pesadas para la camada {$camada} en fecha {$fecha}");
+    // 2. Cargar camada y refs
+    $camada   = Camada::findOrFail($camada);
+    $edadDias = Carbon::parse($camada->fecha_hora_inicio)
+                      ->diffInDays(Carbon::parse($fecha));
+    $seriales = $this->getSerialesDispositivos($camada);
+    $pesoRef  = $this->getPesoReferencia($camada, $edadDias);
 
-    // 1. Cargar la camada y referencias
-    $camada    = Camada::findOrFail($camada);
-    $edadDias  = Carbon::parse($camada->fecha_hora_inicio)
-                       ->diffInDays(Carbon::parse($fecha));
-    $seriales  = $this->getSerialesDispositivos($camada);
-    $pesoRef   = $this->getPesoReferencia($camada, $edadDias);
-
-    // 2. Traer todas las lecturas de peso del día
+    // 3. Traer TODAS lecturas de peso del día
     $lecturas = $this->fetchPesos($seriales, $fecha)
-                     ->sortBy('fecha'); // orden cronológico
+                     ->sortBy('fecha');
 
-    // 3. Variables para el bucle de homogeneidad
-    $acumPeso = 0.0;
-    $cuenta   = 0;
+    // 4. Pre-filtrado ±20% del peso ideal
+    $consideradas = $this->filterByDesviacion($lecturas, $pesoRef, 0.20);
 
-    // 4. Recorrer y clasificar cada lectura
-    $listado = [];
-    foreach ($lecturas as $e) {
-        $v    = $e->valor;
-        $time = $e->fecha;
-        $status = null;
-
-        // 4.1 Descartado si se sale de ±20% del pesoRef
-        if (abs($v - $pesoRef) / $pesoRef > 0.20) {
-            $status = 'descartado';
-        }
-        else {
-            // 4.2 Si no hay coeficiente, todo es aceptado
-            if (is_null($coefHomogeneidad)) {
-                $status = 'aceptada';
-            }
-            else {
-                // calcular media actual (inicial = propio valor)
-                $media = $cuenta ? $acumPeso / $cuenta : $v;
-                $diff  = abs($v - $media) / $media;
-
-                if ($diff <= $coefHomogeneidad) {
-                    $status = 'aceptada';
-                } else {
-                    $status = 'rechazada';
-                }
-            }
-
-            // 4.3 Si fue aceptada, acumular para la media
-            if ($status === 'aceptada') {
-                $acumPeso += $v;
-                $cuenta++;
-            }
-        }
-
-        $listado[] = [
-            'id_dispositivo' => $e->id_dispositivo,
-            'valor'          => $v,
-            'fecha'          => $time,
-            'estado'         => $status,
-        ];
-    }
-
-    // 5. Calcular el resumen (solo sobre las consideradas tras el cruce de peso)
-    $totalConsideradas    = collect($listado)
-                                ->whereIn('estado', ['aceptada', 'rechazada'])
-                                ->count();
-    $aceptadasCount       = collect($listado)
-                                ->where('estado', 'aceptada')
-                                ->count();
-    $rechazadasHCount     = collect($listado)
-                                ->where('estado', 'rechazada')
-                                ->count();
-    $pesoMedioAceptadas   = $aceptadasCount
-        ? round($acumPeso / $aceptadasCount, 2)
+    // 5. Calcular media GLOBAL de las consideradas
+    $valores      = $consideradas->pluck('valor')->map(fn($v) => (float)$v);
+    $mediaGlobal  = $valores->count()
+        ? round($valores->avg(), 2)
         : 0;
 
-    // 6. Devolver JSON con resumen + listado
+    // 6. Clasificar cada lectura (incluye también las descartadas)
+    $listado = $lecturas->map(function($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad) {
+        $v     = (float) $e->valor;
+        $fecha = $e->fecha;
+
+        // 6.1 Si sale de ±20%, es descartada
+        if (abs($v - $pesoRef) / $pesoRef > 0.20) {
+            $estado = 'descartado';
+        }
+        else {
+            // 6.2 Si no hay coeficiente, todo lo que pasa el ±20% es aceptado
+            if (is_null($coefHomogeneidad)) {
+                $estado = 'aceptada';
+            }
+            else {
+                // 6.3 Con coeficiente: comparar contra mediaGlobal
+                $diff = $mediaGlobal > 0
+                    ? abs($v - $mediaGlobal) / $mediaGlobal
+                    : 0;
+                $estado = ($diff <= $coefHomogeneidad)
+                    ? 'aceptada'
+                    : 'rechazada';
+            }
+        }
+
+        return [
+            'id_dispositivo' => $e->id_dispositivo,
+            'valor'          => $v,
+            'fecha'          => $fecha,
+            'estado'         => $estado,
+        ];
+    });
+
+    // 7. Resumen
+    $totalConsideradas  = $consideradas->count();
+    $aceptadasCount     = $listado->where('estado', 'aceptada')->count();
+    $rechazadasCount    = $listado->where('estado', 'rechazada')->count();
+    $pesoMedioAceptadas = $aceptadasCount
+        ? round(
+            $listado
+                ->where('estado', 'aceptada')
+                ->pluck('valor')
+                ->avg(),
+            2
+        )
+        : 0;
+
+    // 8. Responder
     return response()->json([
-        'total_pesadas'            => $totalConsideradas,
-        'aceptadas'                => $aceptadasCount,
-        'rechazadas_homogeneidad'  => $rechazadasHCount,
-        'peso_medio_aceptadas'     => $pesoMedioAceptadas,
-        'listado_pesos'            => $listado,
-    ], Response::HTTP_OK);
+    'total_pesadas'            => $totalConsideradas,
+    'aceptadas'                => $aceptadasCount,
+    'rechazadas_homogeneidad'  => $rechazadasCount,
+    'peso_medio_global'        => $mediaGlobal,         
+    'peso_medio_aceptadas'     => $pesoMedioAceptadas,
+    'listado_pesos'            => $listado->values(),
+], Response::HTTP_OK);
 }
+
 
 public function getByGranja(string $numeroRega): JsonResponse
     {
