@@ -271,29 +271,41 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     $edadDias = Carbon::parse($camada->fecha_hora_inicio)
                       ->diffInDays(Carbon::parse($fecha));
     $seriales = $this->getSerialesDispositivos($camada);
-    $pesoRef  = $this->getPesoReferencia($camada, $edadDias);
+    
+    // 2.a Obtener peso de referencia y loggear
+    $pesoRef = $this->getPesoReferencia($camada, $edadDias);
+    Log::info("Peso referencia Ross para camada {$camada->id_camada}: {$pesoRef} kg (edad {$edadDias} días, sexaje {$camada->sexaje})");
 
     // 3. Traer TODAS lecturas de peso del día
     $lecturas = $this->fetchPesos($seriales, $fecha)
                      ->sortBy('fecha');
 
-    // 4. Pre-filtrado ±20% del peso ideal
-    $consideradas = $this->filterByDesviacion($lecturas, $pesoRef, 0.20);
+    // 4. Pre-filtrado ±20% del peso ideal y log de cada comparación
+    $consideradas = $lecturas->filter(function($e) use ($pesoRef) {
+        $v    = (float) $e->valor;
+        $diff = abs($v - $pesoRef) / $pesoRef;
+        $ok   = $diff <= 0.20;
+        Log::info("Lectura {$e->fecha} valor={$v} kg → diffPesoIdeal=" . round($diff, 3)
+            . " → " . ($ok ? 'PASA ±20%' : 'DESCARTADA'));
+        return $ok;
+    });
 
-    // 5. Calcular media GLOBAL de las consideradas
-    $valores      = $consideradas->pluck('valor')->map(fn($v) => (float)$v);
-    $mediaGlobal  = $valores->count()
+    // 5. Calcular media GLOBAL de las consideradas y log
+    $valores     = $consideradas->pluck('valor')->map(fn($v) => (float)$v);
+    $mediaGlobal = $valores->count()
         ? round($valores->avg(), 2)
         : 0;
+    Log::info("Media GLOBAL de no descartadas: {$mediaGlobal} kg");
 
-    // 5b. Calcular tramo de aceptación según coeficiente
-    $tramoMin = null;
-    $tramoMax = null;
+    // 5.b Calcular tramo de aceptación
+    $tramoMin = $tramoMax = null;
     if (! is_null($coefHomogeneidad) && $mediaGlobal > 0) {
         $tramoMin = round($mediaGlobal * (1 - $coefHomogeneidad), 2);
         $tramoMax = round($mediaGlobal * (1 + $coefHomogeneidad), 2);
+        Log::info("Tramo homog. aceptado: {$tramoMin} kg – {$tramoMax} kg (coef={$coefHomogeneidad})");
     }
-    // 6. Clasificar cada lectura (incluye también las descartadas)
+
+    // 6. Clasificar cada lectura y log del resultado
     $listado = $lecturas->map(function($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad) {
         $v     = (float) $e->valor;
         $fecha = $e->fecha;
@@ -306,15 +318,16 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
             // 6.2 Si no hay coeficiente, todo lo que pasa el ±20% es aceptado
             if (is_null($coefHomogeneidad)) {
                 $estado = 'aceptada';
-            }
-            else {
-                // 6.3 Con coeficiente: comparar contra mediaGlobal
-                $diff = $mediaGlobal > 0
+            } else {
+                $diffGlobal = $mediaGlobal > 0
                     ? abs($v - $mediaGlobal) / $mediaGlobal
                     : 0;
-                $estado = ($diff <= $coefHomogeneidad)
+                $estado = ($diffGlobal <= $coefHomogeneidad)
                     ? 'aceptada'
                     : 'rechazada';
+
+                Log::info("Lectura {$fecha} valor={$v} kg → diffGlobal=" . round($diffGlobal, 3)
+                    . " → {$estado}");
             }
         }
 
@@ -326,7 +339,7 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
         ];
     });
 
-    // 7. Resumen
+    // 7. Resumen final (sin logs adicionales)
     $totalConsideradas  = $consideradas->count();
     $aceptadasCount     = $listado->where('estado', 'aceptada')->count();
     $rechazadasCount    = $listado->where('estado', 'rechazada')->count();
@@ -340,20 +353,18 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
         )
         : 0;
 
-    // 8. Responder
+    // 8. Devolver JSON
     return response()->json([
         'total_pesadas'            => $totalConsideradas,
         'aceptadas'                => $aceptadasCount,
         'rechazadas_homogeneidad'  => $rechazadasCount,
         'peso_medio_global'        => $mediaGlobal,
         'peso_medio_aceptadas'     => $pesoMedioAceptadas,
-        'tramo_aceptado'           => [
-            'min' => $tramoMin,
-            'max' => $tramoMax,
-        ],
+        'tramo_aceptado'           => ['min'=>$tramoMin,'max'=>$tramoMax],
         'listado_pesos'            => $listado->values(),
     ], Response::HTTP_OK);
 }
+
 
 
 public function getByGranja(string $numeroRega): JsonResponse
