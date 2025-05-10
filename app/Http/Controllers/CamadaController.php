@@ -265,7 +265,7 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     $coefHomogeneidad = $request->has('coefHomogeneidad') ? (float) $request->query('coefHomogeneidad') : null;
 
     // 1. Cargar la camada y referencias
-    $camada    = Camada::findOrFail($camadaId);
+    $camada    = Camada::findOrFail($camada);
     $edadDias  = Carbon::parse($camada->fecha_hora_inicio)
                        ->diffInDays(Carbon::parse($fecha));
     $seriales  = $this->getSerialesDispositivos($camada);
