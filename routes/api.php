@@ -40,14 +40,27 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 | Recursos RESTful
 */
 Route::apiResource('camadas',         CamadaController::class);
+// Vincular / desvincular dispositivos a una camada
+Route::post   ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'attachDispositivo']);
+Route::delete ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'detachDispositivo']);
+
+// Calcular y listar pesadas con estado para una fecha concreta
+// Parámetros por query string: 
+//   - fecha=YYYY-MM-DD    (obligatorio)  
+//   - coefHomogeneidad=0.10 (opcional)
+Route::get('camadas/{camada}/pesadas', [CamadaController::class, 'calcularPesadasPorDia']);
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 
 Route::apiResource('empresas',        EmpresaController::class);
+Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])
+     ->name('empresas.granjas');
 
 Route::apiResource('entradas-datos',  EntradaDatoController::class);
 
 Route::apiResource('granjas',         GranjaController::class);
+Route::get('granjas/{numeroRega}/camadas', [CamadaController::class, 'getByGranja'])
+     ->name('granjas.camadas');
 Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
 
 Route::apiResource('instalaciones',   InstalacionController::class);

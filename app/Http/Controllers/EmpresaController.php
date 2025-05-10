@@ -96,4 +96,6 @@ class EmpresaController extends Controller
         Empresa::findOrFail($id)->delete();
         return response()->json(null, 204);
     }
+
+    
 }

@@ -7,6 +7,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use App\Models\EntradaDato;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 
 class GranjaController extends Controller
 {
@@ -160,5 +162,13 @@ class GranjaController extends Controller
     ]);
 }
 
+public function getByEmpresa(int $empresa): JsonResponse
+    {
+        $granjas = Granja::where('empresa_id', $empresa)
+                    ->orderBy('nombre')
+                    ->get(['id', 'nombre', 'numero_rega']);
+
+        return response()->json($granjas, Response::HTTP_OK);
+    }
     
 }

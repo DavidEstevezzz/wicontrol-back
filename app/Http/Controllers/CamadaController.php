@@ -6,6 +6,12 @@ namespace App\Http\Controllers;
 use App\Models\Camada;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use App\Models\Dispositivo;
+use Illuminate\Http\JsonResponse;
+use App\Models\EntradaDato;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 class CamadaController extends Controller
 {
@@ -79,5 +85,267 @@ class CamadaController extends Controller
     {
         $camada->delete();
         return response()->json(null, Response::HTTP_NO_CONTENT);
+    }
+
+    /**
+     * Vincula un dispositivo a una camada (tabla pivote tb_relacion_camada_dispositivo).
+     *
+     * @param  int  $camadaId
+     * @param  int  $dispId
+     * @return JsonResponse
+     */
+    public function attachDispositivo(int $camadaId, int $dispId): JsonResponse
+    {
+        // Buscar la camada y el dispositivo, o fallar con 404
+        $camada = Camada::findOrFail($camadaId);
+        $dispositivo = Dispositivo::findOrFail($dispId);
+
+        // Vincular si no existe ya
+        if (! $camada->dispositivos()->where('dispositivo_id', $dispId)->exists()) {
+            $camada->dispositivos()->attach($dispId);
+            return response()->json([
+                'message' => "Dispositivo {$dispId} vinculado a camada {$camadaId}."
+            ], 201);
+        }
+
+        return response()->json([
+            'message' => 'El dispositivo ya está vinculado a esta camada.'
+        ], 200);
+    }
+
+    /**
+     * Desvincula un dispositivo de una camada.
+     *
+     * @param  int  $camadaId
+     * @param  int  $dispId
+     * @return JsonResponse
+     */
+    public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
+    {
+        $camada = Camada::findOrFail($camadaId);
+        $dispositivo = Dispositivo::findOrFail($dispId);
+
+        // Desvincular si existe
+        if ($camada->dispositivos()->where('dispositivo_id', $dispId)->exists()) {
+            $camada->dispositivos()->detach($dispId);
+            return response()->json([
+                'message' => "Dispositivo {$dispId} desvinculado de camada {$camadaId}."
+            ], 200);
+        }
+
+        return response()->json([
+            'message' => 'El dispositivo no está vinculado a esta camada.'
+        ], 404);
+    }
+
+    /**
+     * Devuelve un array de números de serie de los dispositivos vinculados.
+     */
+    private function getSerialesDispositivos(Camada $camada): array
+    {
+        return $camada
+            ->dispositivos()
+            ->pluck('numero_serie')
+            ->toArray();
+    }
+
+    /**
+     * Recupera todas las lecturas de peso (sensor=2) para esos seriales en la fecha dada.
+     */
+    private function fetchPesos(array $seriales, string $fecha): Collection
+    {
+        return EntradaDato::whereIn('id_dispositivo', $seriales)
+            ->whereDate('fecha', $fecha)
+            ->where('id_sensor', 2)
+            ->get(['id_dispositivo', 'valor', 'fecha']);
+    }
+
+    /**
+     * Obtiene el peso de referencia desde la tabla tb_peso_{estirpe},
+     * leyendo la columna adecuada según el sexaje.
+     */
+    private function getPesoReferencia(Camada $camada, int $edadDias): float
+    {
+        $tabla = 'tb_peso_' . strtolower($camada->tipo_estirpe);
+        $sexaje = strtolower($camada->sexaje);
+
+        // Alternativa 1: if-else
+        if ($sexaje === 'macho') {
+            $col = 'Machos';
+        } elseif ($sexaje === 'hembra') {
+            $col = 'Hembras';
+        } else {
+            $col = 'Mixto';
+        }
+
+        return (float) DB::table($tabla)
+            ->where('edad', $edadDias)
+            ->value($col);
+    }
+
+    /**
+     * Filtra la colección de lecturas descartando aquellas
+     * que difieran más de un 20% del peso de referencia.
+     */
+    private function filterByDesviacion(Collection $lecturas, float $pesoRef, float $umbral = 0.20): Collection
+    {
+        return $lecturas->filter(function ($e) use ($pesoRef, $umbral) {
+            return abs($e->valor - $pesoRef) / $pesoRef <= $umbral;
+        });
+    }
+
+    /**
+     * Aplica el coeficiente de homogeneidad opcional.
+     * Devuelve un array con:
+     *   - 'aceptadas' Collection de valores válidos
+     *   - 'rechazadas' Collection de valores fuera de coeficiente
+     *   - 'media'      float de la media acumulada de aceptadas
+     */
+    private function filterByHomogeneidad(Collection $lecturas, ?float $coef): array
+    {
+        $aceptadas   = collect();
+        $rechazadas  = collect();
+        $acumPeso    = 0.0;
+        $cuenta      = 0;
+
+        foreach ($lecturas as $item) {
+            $v = $item->valor;
+
+            if (is_null($coef)) {
+                $aceptadas->push($v);
+                $acumPeso += $v;
+                $cuenta++;
+                continue;
+            }
+
+            $media = $cuenta ? $acumPeso / $cuenta : $v;
+            $diff  = abs($v - $media) / $media;
+
+            if ($diff <= $coef) {
+                $aceptadas->push($v);
+                $acumPeso += $v;
+                $cuenta++;
+            } else {
+                $rechazadas->push($v);
+            }
+        }
+
+        return [
+            'aceptadas'  => $aceptadas,
+            'rechazadas' => $rechazadas,
+            'media'      => $cuenta ? round($acumPeso / $cuenta, 2) : 0,
+        ];
+    }
+
+    /**
+     * Calcula el número de animales pesados en una fecha concreta,
+     * aplicando filtros de desviación respecto al peso ideal y
+     * (opcionalmente) un coeficiente de homogeneidad.
+     *
+     * @param  int         $camadaId            ID de la camada
+     * @param  string      $fecha               Fecha a consultar (YYYY-MM-DD)
+     * @param  float|null  $coefHomogeneidad    Porcentaje (p.ej. 0.10 para 10%), opcional
+     * @return JsonResponse
+     */
+    /**
+ * Calcula el resumen de pesadas y devuelve el listado con su estado
+ * (aceptada, descartada o rechazada) para una camada en un día dado.
+ *
+ * @param  int         $camadaId
+ * @param  string      $fecha              // YYYY-MM-DD
+ * @param  float|null  $coefHomogeneidad   // 0.10 para 10%, opcional
+ * @return JsonResponse
+ */
+public function calcularPesadasPorDia(int $camadaId, string $fecha, ?float $coefHomogeneidad = null): JsonResponse
+{
+    // 1. Cargar la camada y referencias
+    $camada    = Camada::findOrFail($camadaId);
+    $edadDias  = Carbon::parse($camada->fecha_hora_inicio)
+                       ->diffInDays(Carbon::parse($fecha));
+    $seriales  = $this->getSerialesDispositivos($camada);
+    $pesoRef   = $this->getPesoReferencia($camada, $edadDias);
+
+    // 2. Traer todas las lecturas de peso del día
+    $lecturas = $this->fetchPesos($seriales, $fecha)
+                     ->sortBy('fecha'); // orden cronológico
+
+    // 3. Variables para el bucle de homogeneidad
+    $acumPeso = 0.0;
+    $cuenta   = 0;
+
+    // 4. Recorrer y clasificar cada lectura
+    $listado = [];
+    foreach ($lecturas as $e) {
+        $v    = $e->valor;
+        $time = $e->fecha;
+        $status = null;
+
+        // 4.1 Descartado si se sale de ±20% del pesoRef
+        if (abs($v - $pesoRef) / $pesoRef > 0.20) {
+            $status = 'descartado';
+        }
+        else {
+            // 4.2 Si no hay coeficiente, todo es aceptado
+            if (is_null($coefHomogeneidad)) {
+                $status = 'aceptada';
+            }
+            else {
+                // calcular media actual (inicial = propio valor)
+                $media = $cuenta ? $acumPeso / $cuenta : $v;
+                $diff  = abs($v - $media) / $media;
+
+                if ($diff <= $coefHomogeneidad) {
+                    $status = 'aceptada';
+                } else {
+                    $status = 'rechazada';
+                }
+            }
+
+            // 4.3 Si fue aceptada, acumular para la media
+            if ($status === 'aceptada') {
+                $acumPeso += $v;
+                $cuenta++;
+            }
+        }
+
+        $listado[] = [
+            'id_dispositivo' => $e->id_dispositivo,
+            'valor'          => $v,
+            'fecha'          => $time,
+            'estado'         => $status,
+        ];
+    }
+
+    // 5. Calcular el resumen (solo sobre las consideradas tras el cruce de peso)
+    $totalConsideradas    = collect($listado)
+                                ->whereIn('estado', ['aceptada', 'rechazada'])
+                                ->count();
+    $aceptadasCount       = collect($listado)
+                                ->where('estado', 'aceptada')
+                                ->count();
+    $rechazadasHCount     = collect($listado)
+                                ->where('estado', 'rechazada')
+                                ->count();
+    $pesoMedioAceptadas   = $aceptadasCount
+        ? round($acumPeso / $aceptadasCount, 2)
+        : 0;
+
+    // 6. Devolver JSON con resumen + listado
+    return response()->json([
+        'total_pesadas'            => $totalConsideradas,
+        'aceptadas'                => $aceptadasCount,
+        'rechazadas_homogeneidad'  => $rechazadasHCount,
+        'peso_medio_aceptadas'     => $pesoMedioAceptadas,
+        'listado_pesos'            => $listado,
+    ], Response::HTTP_OK);
+}
+
+public function getByGranja(string $numeroRega): JsonResponse
+    {
+        $camadas = Camada::where('codigo_granja', $numeroRega)
+                    ->orderBy('fecha_hora_inicio', 'desc')
+                    ->get(['id_camada', 'nombre_camada']);
+
+        return response()->json($camadas, Response::HTTP_OK);
     }
 }
