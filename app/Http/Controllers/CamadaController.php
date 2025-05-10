@@ -104,7 +104,7 @@ class CamadaController extends Controller
         $dispositivo = Dispositivo::findOrFail($dispId);
 
         // Vincular si no existe ya
-        if (! $camada->dispositivos()->where('dispositivo_id', $dispId)->exists()) {
+        if (! $camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
             $camada->dispositivos()->attach($dispId);
             return response()->json([
                 'message' => "Dispositivo {$dispId} vinculado a camada {$camadaId}."
@@ -129,7 +129,7 @@ class CamadaController extends Controller
         $dispositivo = Dispositivo::findOrFail($dispId);
 
         // Desvincular si existe
-        if ($camada->dispositivos()->where('dispositivo_id', $dispId)->exists()) {
+        if ($camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
             $camada->dispositivos()->detach($dispId);
             return response()->json([
                 'message' => "Dispositivo {$dispId} desvinculado de camada {$camadaId}."
@@ -381,7 +381,7 @@ class CamadaController extends Controller
 
         // 2. Cargar camada y validar dispositivo asociado
         $camada = Camada::findOrFail($camadaId);
-        if (! $camada->dispositivos()->where('dispositivo_id', $dispId)->exists()) {
+        if (! $camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
             return response()->json([
                 'message' => "El dispositivo {$dispId} no pertenece a la camada {$camadaId}."
             ], Response::HTTP_BAD_REQUEST);
