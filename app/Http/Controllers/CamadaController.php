@@ -505,17 +505,20 @@ class CamadaController extends Controller
         return response()->json($camadas, Response::HTTP_OK);
     }
 
-    public function getDispositivosByCamada(int $camadaId): JsonResponse
+   public function getDispositivosByCamada(int $camadaId): JsonResponse
 {
-    // 1) Cargar la camada (o 404)
     $camada = Camada::findOrFail($camadaId);
 
-    // 2) Obtener los dispositivos relacionados (puedes seleccionar los campos que necesites)
+    // Seleccionamos sólo columnas de tb_dispositivo, prefijando la tabla
     $dispositivos = $camada
         ->dispositivos()
-        ->get(['id_dispositivo', 'numero_serie', 'ip_address']);
+        ->select([
+            'tb_dispositivo.id_dispositivo',
+            'tb_dispositivo.numero_serie',
+            'tb_dispositivo.ip_address'
+        ])
+        ->get();
 
-    // 3) Devolver JSON
     return response()->json($dispositivos, Response::HTTP_OK);
 }
 }
