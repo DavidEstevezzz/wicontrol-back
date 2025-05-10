@@ -381,7 +381,9 @@ class CamadaController extends Controller
 
         // 2. Cargar camada y validar dispositivo asociado
         $camada = Camada::findOrFail($camadaId);
-        if (! $camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
+        if (! $camada->dispositivos()
+            ->wherePivot('id_dispositivo', $dispId)
+            ->exists()) {
             return response()->json([
                 'message' => "El dispositivo {$dispId} no pertenece a la camada {$camadaId}."
             ], Response::HTTP_BAD_REQUEST);
@@ -505,20 +507,20 @@ class CamadaController extends Controller
         return response()->json($camadas, Response::HTTP_OK);
     }
 
-   public function getDispositivosByCamada(int $camadaId): JsonResponse
-{
-    $camada = Camada::findOrFail($camadaId);
+    public function getDispositivosByCamada(int $camadaId): JsonResponse
+    {
+        $camada = Camada::findOrFail($camadaId);
 
-    // Seleccionamos sólo columnas de tb_dispositivo, prefijando la tabla
-    $dispositivos = $camada
-        ->dispositivos()
-        ->select([
-            'tb_dispositivo.id_dispositivo',
-            'tb_dispositivo.numero_serie',
-            'tb_dispositivo.ip_address'
-        ])
-        ->get();
+        // Seleccionamos sólo columnas de tb_dispositivo, prefijando la tabla
+        $dispositivos = $camada
+            ->dispositivos()
+            ->select([
+                'tb_dispositivo.id_dispositivo',
+                'tb_dispositivo.numero_serie',
+                'tb_dispositivo.ip_address'
+            ])
+            ->get();
 
-    return response()->json($dispositivos, Response::HTTP_OK);
-}
+        return response()->json($dispositivos, Response::HTTP_OK);
+    }
 }
