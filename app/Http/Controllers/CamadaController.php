@@ -269,8 +269,8 @@ class CamadaController extends Controller
 
         // 2. Cargar camada y refs
         $camada   = Camada::findOrFail($camada);
-        $edadDias = Carbon::parse($camada->fecha_hora_inicio)
-            ->diffInDays(Carbon::parse($fecha));
+        $edadDias = (int)Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fecha);
+
         $seriales = $this->getSerialesDispositivos($camada);
 
         // 2.a Obtener peso de referencia y loggear
@@ -413,8 +413,8 @@ class CamadaController extends Controller
         Log::info("Procesando día: {$d}");
 
         // 4. Edad de la camada ese día
-        $edadDias = Carbon::parse($camada->fecha_hora_inicio)
-            ->diffInDays($dia);
+        $edadDias = (int)Carbon::parse($camada->fecha_hora_inicio)->diffInDays($dia);
+
         Log::info("  Edad de camada en {$d}: {$edadDias} días");
 
         // 5. Peso ideal de referencia
