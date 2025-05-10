@@ -258,14 +258,11 @@ class CamadaController extends Controller
  * @param  float|null  $coefHomogeneidad   // 0.10 para 10%, opcional
  * @return JsonResponse
  */
-public function calcularPesadasPorDia(int $camadaId, string $fecha, ?float $coefHomogeneidad = null): JsonResponse
+public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
 {
-
-    Log::info('calcularPesadasPorDia llamado con:', [
-        'camadaId' => $camadaId,
-        'fecha' => $fecha,
-        'coefHomogeneidad' => $coefHomogeneidad
-    ]);
+    // Obtener parámetros de la consulta
+    $fecha = $request->query('fecha');
+    $coefHomogeneidad = $request->has('coefHomogeneidad') ? (float) $request->query('coefHomogeneidad') : null;
 
     // 1. Cargar la camada y referencias
     $camada    = Camada::findOrFail($camadaId);
