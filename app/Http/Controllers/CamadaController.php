@@ -286,6 +286,13 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
         ? round($valores->avg(), 2)
         : 0;
 
+    // 5b. Calcular tramo de aceptación según coeficiente
+    $tramoMin = null;
+    $tramoMax = null;
+    if (! is_null($coefHomogeneidad) && $mediaGlobal > 0) {
+        $tramoMin = round($mediaGlobal * (1 - $coefHomogeneidad), 2);
+        $tramoMax = round($mediaGlobal * (1 + $coefHomogeneidad), 2);
+    }
     // 6. Clasificar cada lectura (incluye también las descartadas)
     $listado = $lecturas->map(function($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad) {
         $v     = (float) $e->valor;
@@ -335,13 +342,17 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
 
     // 8. Responder
     return response()->json([
-    'total_pesadas'            => $totalConsideradas,
-    'aceptadas'                => $aceptadasCount,
-    'rechazadas_homogeneidad'  => $rechazadasCount,
-    'peso_medio_global'        => $mediaGlobal,         
-    'peso_medio_aceptadas'     => $pesoMedioAceptadas,
-    'listado_pesos'            => $listado->values(),
-], Response::HTTP_OK);
+        'total_pesadas'            => $totalConsideradas,
+        'aceptadas'                => $aceptadasCount,
+        'rechazadas_homogeneidad'  => $rechazadasCount,
+        'peso_medio_global'        => $mediaGlobal,
+        'peso_medio_aceptadas'     => $pesoMedioAceptadas,
+        'tramo_aceptado'           => [
+            'min' => $tramoMin,
+            'max' => $tramoMax,
+        ],
+        'listado_pesos'            => $listado->values(),
+    ], Response::HTTP_OK);
 }
 
 
