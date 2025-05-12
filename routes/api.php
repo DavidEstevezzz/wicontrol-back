@@ -73,8 +73,12 @@ Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
 Route::apiResource('instalaciones',   InstalacionController::class);
 
 Route::apiResource('peso-cobb',       PesoCobbController::class);
+Route::get('peso-cobb/edad/{edad}', [PesoCobbController::class, 'getPesoByEdad']);
+Route::post('peso-cobb/rango', [PesoCobbController::class, 'getPesosByRangoEdad']);
 
 Route::apiResource('peso-ross',       PesoRossController::class);
+Route::get('peso-ross/edad/{edad}', [PesoRossController::class, 'getPesoByEdad']);
+Route::post('peso-ross/rango', [PesoRossController::class, 'getPesosByRangoEdad']);
 
 Route::apiResource('usuarios',        UsuarioController::class);
 Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate']);
