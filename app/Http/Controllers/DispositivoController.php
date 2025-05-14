@@ -79,4 +79,61 @@ class DispositivoController extends Controller
         Dispositivo::findOrFail($id)->delete();
         return response()->json(null, 204);
     }
+
+    /**
+ * Devuelve la información de la granja y nave vinculadas a un dispositivo.
+ *
+ * @param  int  $id  ID del dispositivo
+ * @return \Illuminate\Http\JsonResponse
+ */
+public function getGranjaYNave($id)
+{
+    // Buscamos el dispositivo con sus relaciones
+    $dispositivo = Dispositivo::with(['instalacion', 'instalacion.granja'])
+        ->findOrFail($id);
+    
+    // Si no tiene instalación asignada
+    if (!$dispositivo->instalacion) {
+        return response()->json([
+            'error' => 'El dispositivo no tiene instalación asignada',
+        ], 404);
+    }
+    
+    // Si tiene instalación pero no tiene granja asociada
+    if (!$dispositivo->instalacion->granja) {
+        return response()->json([
+            'error' => 'La instalación del dispositivo no tiene granja asociada',
+            'instalacion_id' => $dispositivo->instalacion->id_instalacion,
+            'numero_rega' => $dispositivo->instalacion->numero_rega,
+        ], 404);
+    }
+    
+    // Obtenemos la información de la nave
+    $idNave = $dispositivo->instalacion->id_nave;
+    
+    // Construimos la respuesta
+    $respuesta = [
+        'dispositivo' => [
+            'id' => $dispositivo->id_dispositivo,
+            'numero_serie' => $dispositivo->numero_serie,
+        ],
+        'instalacion' => [
+            'id' => $dispositivo->instalacion->id_instalacion,
+        ],
+        'granja' => [
+            'numero_rega' => $dispositivo->instalacion->numero_rega,
+            'nombre' => $dispositivo->instalacion->granja->nombre,
+            'direccion' => $dispositivo->instalacion->granja->direccion,
+            'localidad' => $dispositivo->instalacion->granja->localidad,
+            'provincia' => $dispositivo->instalacion->granja->provincia,
+        ],
+        'nave' => [
+            'id' => $idNave,
+            // Si necesitas más información sobre la nave, deberías 
+            // agregar una relación en el modelo Instalacion y cargarla aquí
+        ]
+    ];
+    
+    return response()->json($respuesta);
+}
 }

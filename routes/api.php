@@ -43,6 +43,9 @@ Route::apiResource('camadas',         CamadaController::class);
 // Vincular / desvincular dispositivos a una camada
 Route::post   ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'attachDispositivo']);
 Route::delete ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'detachDispositivo']);
+Route::get('dispositivos/{dispId}/peso-medio', [CamadaController::class, 'calcularPesoMedioPorRango']);
+Route::get('granjas/{codigoGranja}/dispositivos', [CamadaController::class, 'getDispositivosByGranja']);
+
 
 // Calcular y listar pesadas con estado para una fecha concreta
 // Parámetros por query string: 
@@ -58,6 +61,7 @@ Route::get(
     [CamadaController::class, 'getDispositivosByCamada']
 );
 Route::apiResource('dispositivos',    DispositivoController::class);
+Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
 
 Route::apiResource('empresas',        EmpresaController::class);
 Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])

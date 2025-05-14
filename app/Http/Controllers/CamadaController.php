@@ -365,6 +365,133 @@ class CamadaController extends Controller
         ], Response::HTTP_OK);
     }
 
+    /**
+ * Calcula el peso medio de un dispositivo en un rango de días
+ *
+ * @param  Request  $request
+ * @param  int      $dispId     ID del dispositivo
+ * @return JsonResponse
+ */
+public function calcularPesoMedioPorRango(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar fechas
+    $request->validate([
+        'fecha_inicio'      => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'         => 'required|date',
+        'coefHomogeneidad'  => 'nullable|numeric|min:0|max:1',
+    ]);
+    
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin');
+    $coef = $request->has('coefHomogeneidad')
+        ? (float)$request->query('coefHomogeneidad')
+        : null;
+    
+    Log::info("calcularPesoMedioPorRango start — dispositivo={$dispId}, fecha_inicio={$fechaInicio}, fecha_fin={$fechaFin}, coef={$coef}");
+    
+    // 2. Cargar el dispositivo para obtener su número de serie
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    Log::info("Número de serie del dispositivo: {$serie}");
+    
+    // 3. Preparar iteración diaria
+    $inicio = Carbon::parse($fechaInicio);
+    $fin = Carbon::parse($fechaFin);
+    $period = CarbonPeriod::create($inicio, $fin);
+    
+    $pesosTotales = collect();
+    $resumenPorDia = [];
+    
+    foreach ($period as $dia) {
+        $fecha = $dia->format('Y-m-d');
+        Log::info("Procesando día: {$fecha}");
+        
+        // 4. Obtener camada asociada activa para este dispositivo en la fecha dada
+        $camada = Camada::whereHas('dispositivos', function($query) use ($dispId) {
+                $query->where('id_dispositivo', $dispId);
+            })
+            ->where('alta', 1)
+            ->where('fecha_hora_inicio', '<=', $fecha)
+            ->where(function ($query) use ($fecha) {
+                $query->whereNull('fecha_hora_final')
+                    ->orWhere('fecha_hora_final', '>=', $fecha);
+            })
+            ->first();
+        
+        if (!$camada) {
+            Log::info("No hay camada activa para el dispositivo en la fecha {$fecha}");
+            continue;
+        }
+        
+        // 5. Edad de la camada ese día
+        $edadDias = (int)Carbon::parse($camada->fecha_hora_inicio)->diffInDays($dia);
+        
+        // 6. Peso ideal de referencia
+        $pesoRef = $this->getPesoReferencia($camada, $edadDias);
+        
+        // 7. Lecturas del dispositivo ese día (usar número de serie)
+        $lecturas = EntradaDato::where('id_dispositivo', $serie)
+            ->whereDate('fecha', $fecha)
+            ->where('id_sensor', 2)
+            ->get()
+            ->map(fn($e) => (float)$e->valor);
+        
+        // 8. Filtrar por ±20% del peso ideal
+        $consideradas = $lecturas
+            ->filter(fn($v) => $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20)
+            ->values();
+        
+        // 9. Media global de no descartadas
+        $mediaGlobal = $consideradas->count()
+            ? round($consideradas->avg(), 2)
+            : 0.0;
+        
+        // 10. Aceptadas tras coeficiente
+        $aceptadas = $consideradas
+            ->filter(fn($v) => is_null($coef) || ($mediaGlobal > 0
+                && abs($v - $mediaGlobal) / $mediaGlobal <= $coef))
+            ->values();
+        
+        // 11. Peso medio aceptadas
+        $pesoMedio = $aceptadas->count()
+            ? round($aceptadas->avg(), 2)
+            : 0.0;
+        
+        if ($aceptadas->count() > 0) {
+            // Añadir al resumen diario
+            $resumenPorDia[] = [
+                'fecha' => $fecha,
+                'peso_medio' => $pesoMedio,
+                'lecturas_aceptadas' => $aceptadas->count(),
+                'lecturas_totales' => $lecturas->count(),
+            ];
+            
+            // Añadir a la colección para el cálculo global
+            $pesosTotales = $pesosTotales->merge($aceptadas);
+        }
+    }
+    
+    // Cálculo del peso medio global para todo el periodo
+    $pesoMedioGlobal = $pesosTotales->count() 
+        ? round($pesosTotales->avg(), 2)
+        : 0.0;
+    
+    Log::info("calcularPesoMedioPorRango end — Peso medio global: {$pesoMedioGlobal}, días con datos: " . count($resumenPorDia));
+    
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'fecha_inicio' => $fechaInicio,
+        'fecha_fin' => $fechaFin,
+        'peso_medio_global' => $pesoMedioGlobal,
+        'total_lecturas_procesadas' => $pesosTotales->count(),
+        'dias_con_datos' => count($resumenPorDia),
+        'resumen_diario' => $resumenPorDia,
+    ], Response::HTTP_OK);
+}
+
     public function pesadasRango(Request $request, int $camadaId, int $dispId): JsonResponse
 {
     // 0. Asegúrate de importar al principio del fichero:
@@ -552,4 +679,44 @@ class CamadaController extends Controller
 
         return response()->json($dispositivos, Response::HTTP_OK);
     }
+
+    /**
+ * Devuelve todos los dispositivos vinculados a camadas activas de una granja específica.
+ *
+ * @param  string  $codigoGranja
+ * @return JsonResponse
+ */
+public function getDispositivosByGranja(string $codigoGranja): JsonResponse
+{
+    // Obtenemos las camadas activas de la granja
+    $camadasActivas = Camada::where('codigo_granja', $codigoGranja)
+        ->where('alta', 1)
+        ->pluck('id_camada');
+    
+    if ($camadasActivas->isEmpty()) {
+        return response()->json([
+            'message' => 'No se encontraron camadas activas para esta granja.',
+            'dispositivos' => []
+        ], Response::HTTP_OK);
+    }
+    
+    // Recuperamos los dispositivos vinculados a estas camadas
+    // usando una subconsulta para evitar duplicados
+    $dispositivos = Dispositivo::whereHas('camadas', function ($query) use ($camadasActivas) {
+            $query->whereIn('tb_camada.id_camada', $camadasActivas);
+        })
+        ->select([
+            'tb_dispositivo.id_dispositivo',
+            'tb_dispositivo.numero_serie',
+            'tb_dispositivo.ip_address'
+            // Puedes agregar más campos si lo necesitas
+        ])
+        ->distinct() // Para evitar duplicados si un dispositivo está en varias camadas
+        ->get();
+    
+    return response()->json([
+        'total' => $dispositivos->count(),
+        'dispositivos' => $dispositivos
+    ], Response::HTTP_OK);
+}
 }

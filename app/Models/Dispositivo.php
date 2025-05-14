@@ -99,8 +99,8 @@ class Dispositivo extends Model
         return $this->belongsToMany(
             Camada::class,
             'tb_relacion_camada_dispositivo',
-            'dispositivo_id',
-            'camada_id'
+            'id_dispositivo',
+            'id_camada'
         );
     }
 }
