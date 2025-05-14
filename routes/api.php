@@ -56,12 +56,11 @@ Route::get(
     'camadas/{camada}/dispositivos/{disp}/pesadas-rango',
     [CamadaController::class, 'pesadasRango']
 );
-Route::get(
-    'camadas/{camada}/dispositivos',
-    [CamadaController::class, 'getDispositivosByCamada']
-);
+Route::get('camadas/{camada}/dispositivos',[CamadaController::class, 'getDispositivosByCamada']);
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
+Route::get('dispositivos/{id}/camadas', [DispositivoController::class, 'getCamadas']);
+
 
 Route::apiResource('empresas',        EmpresaController::class);
 Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])

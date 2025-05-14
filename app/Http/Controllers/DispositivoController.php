@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Dispositivo;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
 
 class DispositivoController extends Controller
 {
@@ -135,5 +137,20 @@ public function getGranjaYNave($id)
     ];
     
     return response()->json($respuesta);
+}
+
+/**
+ * Obtiene todas las camadas vinculadas a un dispositivo.
+ *
+ * @param  int  $id
+ * @return JsonResponse
+ */
+public function getCamadas(int $id): JsonResponse
+{
+    $dispositivo = Dispositivo::findOrFail($id);
+    
+    $camadas = $dispositivo->camadas()->get();
+    
+    return response()->json($camadas);
 }
 }
