@@ -365,7 +365,7 @@ class CamadaController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /**
+/**
  * Calcula el peso medio de un dispositivo en un rango de días
  *
  * @param  Request  $request
@@ -407,15 +407,16 @@ public function calcularPesoMedioPorRango(Request $request, int $dispId): JsonRe
         Log::info("Procesando día: {$fecha}");
         
         // 4. Obtener camada asociada activa para este dispositivo en la fecha dada
-        $camada = Camada::whereHas('dispositivos', function($query) use ($dispId) {
-                $query->where('id_dispositivo', $dispId);
-            })
-            ->where('alta', 1)
-            ->where('fecha_hora_inicio', '<=', $fecha)
+        // Aquí está el problema - vamos a usar JOINs explícitos para evitar ambigüedad
+        $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+            ->where('tb_camada.alta', 1)
+            ->where('tb_camada.fecha_hora_inicio', '<=', $fecha)
             ->where(function ($query) use ($fecha) {
-                $query->whereNull('fecha_hora_final')
-                    ->orWhere('fecha_hora_final', '>=', $fecha);
+                $query->whereNull('tb_camada.fecha_hora_final')
+                    ->orWhere('tb_camada.fecha_hora_final', '>=', $fecha);
             })
+            ->select('tb_camada.*')
             ->first();
         
         if (!$camada) {
@@ -430,6 +431,7 @@ public function calcularPesoMedioPorRango(Request $request, int $dispId): JsonRe
         $pesoRef = $this->getPesoReferencia($camada, $edadDias);
         
         // 7. Lecturas del dispositivo ese día (usar número de serie)
+        // Importante: Asegurarse de que no hay ambigüedad en esta consulta
         $lecturas = EntradaDato::where('id_dispositivo', $serie)
             ->whereDate('fecha', $fecha)
             ->where('id_sensor', 2)
