@@ -173,7 +173,7 @@ public function getByEmpresa(int $empresa): JsonResponse
         return response()->json($granjas, Response::HTTP_OK);
     }
 
- /**
+/**
  * Obtiene todos los dispositivos activos vinculados a camadas activas de una granja específica.
  *
  * @param  string  $numeroRega
@@ -205,7 +205,7 @@ public function getDispositivosActivos(string $numeroRega): JsonResponse
             'tb_dispositivo.id_dispositivo',
             'tb_dispositivo.numero_serie',
             'tb_dispositivo.ip_address',
-            // Puedes añadir más campos si lo necesitas
+            // Otros campos que necesites
         ])
         ->distinct() // Para evitar duplicados si un dispositivo está en varias camadas
         ->get();
@@ -214,6 +214,6 @@ public function getDispositivosActivos(string $numeroRega): JsonResponse
         'total' => $dispositivos->count(),
         'dispositivos' => $dispositivos
     ]);
-}   
+} 
     
 }
