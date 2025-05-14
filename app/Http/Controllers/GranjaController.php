@@ -184,36 +184,24 @@ public function getDispositivosActivos(string $numeroRega): JsonResponse
     // Validar que la granja existe
     $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
 
-    // Obtener las camadas activas de la granja
-    $camadasActivas = Camada::where('codigo_granja', $numeroRega)
-        ->where('alta', 1)
-        ->pluck('id_camada');
-    
-    if ($camadasActivas->isEmpty()) {
-        return response()->json([
-            'message' => 'No se encontraron camadas activas para esta granja.',
-            'dispositivos' => []
-        ]);
-    }
-    
-    // Recuperamos los dispositivos vinculados a estas camadas
-    // usando una subconsulta para evitar duplicados
-    $dispositivos = Dispositivo::whereHas('camadas', function ($query) use ($camadasActivas) {
-            $query->whereIn('tb_camada.id_camada', $camadasActivas);
-        })
+    // Usar JOIN explícitos para evitar ambigüedad
+    $dispositivos = Dispositivo::join('tb_relacion_camada_dispositivo', 'tb_dispositivo.id_dispositivo', '=', 'tb_relacion_camada_dispositivo.id_dispositivo')
+        ->join('tb_camada', 'tb_relacion_camada_dispositivo.id_camada', '=', 'tb_camada.id_camada')
+        ->where('tb_camada.codigo_granja', $numeroRega)
+        ->where('tb_camada.alta', 1)
         ->select([
             'tb_dispositivo.id_dispositivo',
             'tb_dispositivo.numero_serie',
-            'tb_dispositivo.ip_address',
-            // Otros campos que necesites
+            'tb_dispositivo.ip_address'
+            // Añade otros campos si es necesario
         ])
-        ->distinct() // Para evitar duplicados si un dispositivo está en varias camadas
+        ->distinct()
         ->get();
     
     return response()->json([
         'total' => $dispositivos->count(),
         'dispositivos' => $dispositivos
     ]);
-} 
+}
     
 }
