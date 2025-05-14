@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\EntradaDato;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
+use App\Models\Camada;
+use App\Models\Dispositivo;
 
 class GranjaController extends Controller
 {
@@ -171,6 +173,47 @@ public function getByEmpresa(int $empresa): JsonResponse
         return response()->json($granjas, Response::HTTP_OK);
     }
 
+ /**
+ * Obtiene todos los dispositivos activos vinculados a camadas activas de una granja específica.
+ *
+ * @param  string  $numeroRega
+ * @return JsonResponse
+ */
+public function getDispositivosActivos(string $numeroRega): JsonResponse
+{
+    // Validar que la granja existe
+    $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
+
+    // Obtener las camadas activas de la granja
+    $camadasActivas = Camada::where('codigo_granja', $numeroRega)
+        ->where('alta', 1)
+        ->pluck('id_camada');
     
+    if ($camadasActivas->isEmpty()) {
+        return response()->json([
+            'message' => 'No se encontraron camadas activas para esta granja.',
+            'dispositivos' => []
+        ]);
+    }
+    
+    // Recuperamos los dispositivos vinculados a estas camadas
+    // usando una subconsulta para evitar duplicados
+    $dispositivos = Dispositivo::whereHas('camadas', function ($query) use ($camadasActivas) {
+            $query->whereIn('tb_camada.id_camada', $camadasActivas);
+        })
+        ->select([
+            'tb_dispositivo.id_dispositivo',
+            'tb_dispositivo.numero_serie',
+            'tb_dispositivo.ip_address',
+            // Puedes añadir más campos si lo necesitas
+        ])
+        ->distinct() // Para evitar duplicados si un dispositivo está en varias camadas
+        ->get();
+    
+    return response()->json([
+        'total' => $dispositivos->count(),
+        'dispositivos' => $dispositivos
+    ]);
+}   
     
 }

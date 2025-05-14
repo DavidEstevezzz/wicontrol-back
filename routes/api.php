@@ -73,7 +73,8 @@ Route::apiResource('granjas',         GranjaController::class);
 Route::get('granjas/{numeroRega}/camadas', [CamadaController::class, 'getByGranja'])
      ->name('granjas.camadas');
 Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
-
+Route::get('granjas/{numeroRega}/dispositivos-activos', [GranjaController::class, 'getDispositivosActivos'])
+    ->name('granjas.dispositivos-activos');
 Route::apiResource('instalaciones',   InstalacionController::class);
 
 Route::apiResource('peso-cobb',       PesoCobbController::class);
