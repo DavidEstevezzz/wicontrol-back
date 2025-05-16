@@ -15,6 +15,11 @@ use App\Http\Controllers\PesoCobbController;
 use App\Http\Controllers\PesoRossController;
 use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\PesoPavoButPremiumController;
+use App\Http\Controllers\PesoPavoNicholasSelectController;
+use App\Http\Controllers\PesoPavoHybridConverterController;
+use App\Http\Controllers\PesoReproductorRossController;
+
 
 /*
 | Test de conexión
@@ -79,6 +84,10 @@ Route::apiResource('instalaciones',   InstalacionController::class);
 Route::apiResource('peso-cobb',       PesoCobbController::class);
 Route::get('peso-cobb/edad/{edad}', [PesoCobbController::class, 'getPesoByEdad']);
 Route::post('peso-cobb/rango', [PesoCobbController::class, 'getPesosByRangoEdad']);
+Route::apiResource('peso-reproductores-ross', PesoReproductorRossController::class);
+Route::apiResource('pavos-hybridconverter', PesoPavoHybridConverterController::class);
+Route::apiResource('pavos-nicholasselect', PesoPavoNicholasSelectController::class);
+Route::apiResource('pavos-butpremium', PesoPavoButPremiumController::class);
 
 Route::apiResource('peso-ross',       PesoRossController::class);
 Route::get('peso-ross/edad/{edad}', [PesoRossController::class, 'getPesoByEdad']);
