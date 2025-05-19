@@ -998,4 +998,213 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
         'alertas' => $alertas
     ], Response::HTTP_OK);
 }
+
+/**
+ * Obtiene datos de humedad para gráfica y tabla de alertas con márgenes variables
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
+public function getHumedadGraficaAlertas(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'    => 'required|date',
+    ]);
+
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin');
+
+    // 2. Cargar dispositivo y camada asociada
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+        ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+        ->where(function ($query) use ($fechaInicio, $fechaFin) {
+            $query->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                  ->where(function ($q2) use ($fechaInicio) {
+                      $q2->whereNull('tb_camada.fecha_hora_final')
+                         ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                  });
+            });
+        })
+        ->select('tb_camada.*')
+        ->first();
+    
+    if (!$camada) {
+        return response()->json([
+            'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ]
+        ], Response::HTTP_OK);
+    }
+    
+    // 3. Función para determinar rangos de humedad aceptables según edad
+    $obtenerRangosHumedad = function($edadDias) {
+        if ($edadDias >= 0 && $edadDias <= 3) {
+            return [
+                'min' => 55,
+                'max' => 75
+            ];
+        } elseif ($edadDias <= 14) {
+            return [
+                'min' => 50,
+                'max' => 70
+            ];
+        } else {
+            return [
+                'min' => 45,
+                'max' => 65
+            ];
+        }
+    };
+    
+    // 4. Sensor de humedad
+    $SENSOR_HUMEDAD = 5;
+    
+    // 5. Obtener todas las lecturas individuales para la tabla de alertas
+    $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD)
+        ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+    
+    // 6. Obtener datos diarios para la gráfica
+    $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD)
+        ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+        ->select(
+            DB::raw('DATE(fecha) as dia'),
+            DB::raw('ROUND(AVG(valor),2) as humedad_media'),
+            DB::raw('MIN(valor) as humedad_min'),
+            DB::raw('MAX(valor) as humedad_max'),
+            DB::raw('COUNT(*) as lecturas')
+        )
+        ->groupBy('dia')
+        ->orderBy('dia')
+        ->get();
+    
+    // 7. Preparar datos para la gráfica con referencias y rangos aceptables
+    $datosGrafica = [];
+    foreach ($datosDiarios as $dato) {
+        // Calcular edad de la camada para ese día
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)
+            ->diffInDays(Carbon::parse($dato->dia));
+        
+        // Obtener rangos de humedad para esta edad
+        $rangos = $obtenerRangosHumedad($edadDias);
+        $humedadMin = $rangos['min'];
+        $humedadMax = $rangos['max'];
+        
+        $humedadReferencia = ($humedadMin + $humedadMax) / 2; // Punto medio del rango como referencia
+        
+        $datosGrafica[] = [
+            'fecha' => $dato->dia,
+            'humedad_media' => $dato->humedad_media,
+            'humedad_min' => $dato->humedad_min,
+            'humedad_max' => $dato->humedad_max,
+            'humedad_referencia' => $humedadReferencia,
+            'limite_inferior' => $humedadMin,
+            'limite_superior' => $humedadMax,
+            'edad_dias' => $edadDias,
+            'lecturas' => $dato->lecturas
+        ];
+    }
+    
+    // 8. Preparar datos para la tabla de alertas (lecturas fuera de rango)
+    $alertas = [];
+    $totalFueraDeRango = 0;
+    
+    foreach ($todasLasLecturas as $lectura) {
+        $fechaLectura = Carbon::parse($lectura->fecha);
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fechaLectura);
+        
+        // Obtener rangos de humedad para esta edad
+        $rangos = $obtenerRangosHumedad($edadDias);
+        $humedadMin = $rangos['min'];
+        $humedadMax = $rangos['max'];
+        $humedadReferencia = ($humedadMin + $humedadMax) / 2;
+        
+        $valorLectura = (float) $lectura->valor;
+        
+        // Verificar si está fuera del rango aceptable
+        if ($valorLectura < $humedadMin || $valorLectura > $humedadMax) {
+            $tipo = $valorLectura < $humedadMin ? 'baja' : 'alta';
+            $desviacion = round($valorLectura - $humedadReferencia, 2);
+            $desviacionPorcentaje = round(($desviacion / $humedadReferencia) * 100, 2);
+            
+            $alertas[] = [
+                'fecha' => $fechaLectura->format('Y-m-d'),
+                'hora' => $fechaLectura->format('H:i:s'),
+                'humedad_medida' => $valorLectura,
+                'humedad_referencia' => $humedadReferencia,
+                'limite_inferior' => $humedadMin,
+                'limite_superior' => $humedadMax,
+                'desviacion' => $desviacion,
+                'desviacion_porcentaje' => $desviacionPorcentaje,
+                'tipo' => $tipo,
+                'edad_dias' => $edadDias,
+                'rango_edad' => $edadDias <= 3 ? '0-3 días' : ($edadDias <= 14 ? '4-14 días' : '15+ días')
+            ];
+            $totalFueraDeRango++;
+        }
+    }
+    
+    // 9. Calcular humedad media global para el periodo
+    $humedadMediaGlobal = $todasLasLecturas->avg('valor');
+    $totalLecturas = $todasLasLecturas->count();
+    $porcentajeFueraDeRango = $totalLecturas > 0 ? 
+        round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
+    
+    // 10. Preparar respuesta completa
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'camada' => [
+            'id' => $camada->id_camada,
+            'nombre' => $camada->nombre_camada,
+            'tipo_ave' => $camada->tipo_ave,
+            'fecha_inicio' => $camada->fecha_hora_inicio
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin
+        ],
+        'configuracion' => [
+            'rangos_alerta' => [
+                [
+                    'rango_edad' => '0-3 días',
+                    'humedad_min' => '55%',
+                    'humedad_max' => '75%'
+                ],
+                [
+                    'rango_edad' => '4-14 días',
+                    'humedad_min' => '50%',
+                    'humedad_max' => '70%'
+                ],
+                [
+                    'rango_edad' => '15+ días',
+                    'humedad_min' => '45%',
+                    'humedad_max' => '65%'
+                ]
+            ]
+        ],
+        'resumen' => [
+            'humedad_media_global' => round($humedadMediaGlobal, 2),
+            'total_lecturas' => $totalLecturas,
+            'lecturas_fuera_rango' => $totalFueraDeRango,
+            'porcentaje_fuera_rango' => $porcentajeFueraDeRango
+        ],
+        'datos_grafica' => $datosGrafica,
+        'alertas' => $alertas
+    ], Response::HTTP_OK);
+}
 }
