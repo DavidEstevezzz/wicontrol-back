@@ -736,12 +736,11 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     $request->validate([
         'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
         'fecha_fin'    => 'required|date',
-        'usar_margenes_personalizados' => 'nullable|boolean' // Podemos permitir desactivar los márgenes personalizados
     ]);
 
     $fechaInicio = $request->query('fecha_inicio');
     $fechaFin = $request->query('fecha_fin');
-    $usarMargenesPersonalizados = $request->query('usar_margenes_personalizados', true);
+    $usarMargenesPersonalizados = true;
 
     // 2. Cargar dispositivo y camada asociada
     $dispositivo = Dispositivo::findOrFail($dispId);
