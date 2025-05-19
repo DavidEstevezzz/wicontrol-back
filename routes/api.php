@@ -57,11 +57,9 @@ Route::get('granjas/{codigoGranja}/dispositivos', [CamadaController::class, 'get
 //   - fecha=YYYY-MM-DD    (obligatorio)  
 //   - coefHomogeneidad=0.10 (opcional)
 Route::get('camadas/{camada}/pesadas', [CamadaController::class, 'calcularPesadasPorDia']);
-Route::get(
-    'camadas/{camada}/dispositivos/{disp}/pesadas-rango',
-    [CamadaController::class, 'pesadasRango']
-);
+Route::get('camadas/{camada}/dispositivos/{disp}/pesadas-rango',[CamadaController::class, 'pesadasRango']);
 Route::get('camadas/{camada}/dispositivos',[CamadaController::class, 'getDispositivosByCamada']);
+Route::get('dispositivos/{dispId}/temperatura-grafica-alertas', [CamadaController::class, 'getTemperaturaGraficaAlertas']);
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
 Route::get('dispositivos/{id}/camadas', [DispositivoController::class, 'getCamadas']);

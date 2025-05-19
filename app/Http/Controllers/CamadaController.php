@@ -14,6 +14,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Carbon\CarbonPeriod;
+use App\Models\TemperaturaBroilers;
 
 
 class CamadaController extends Controller
@@ -719,6 +720,283 @@ public function getDispositivosByGranja(string $codigoGranja): JsonResponse
     return response()->json([
         'total' => $dispositivos->count(),
         'dispositivos' => $dispositivos
+    ], Response::HTTP_OK);
+}
+
+/**
+ * Obtiene datos de temperatura para gráfica y tabla de alertas con márgenes variables
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
+public function getTemperaturaGraficaAlertas(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'    => 'required|date',
+        'usar_margenes_personalizados' => 'nullable|boolean' // Podemos permitir desactivar los márgenes personalizados
+    ]);
+
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin');
+    $usarMargenesPersonalizados = $request->query('usar_margenes_personalizados', true);
+
+    // 2. Cargar dispositivo y camada asociada
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+        ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+        ->where(function ($query) use ($fechaInicio, $fechaFin) {
+            $query->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                  ->where(function ($q2) use ($fechaInicio) {
+                      $q2->whereNull('tb_camada.fecha_hora_final')
+                         ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                  });
+            });
+        })
+        ->select('tb_camada.*')
+        ->first();
+    
+    if (!$camada) {
+        return response()->json([
+            'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ]
+        ], Response::HTTP_OK);
+    }
+    
+    // 3. Función para determinar márgenes según edad
+    $obtenerMargenes = function($edadDias) use ($usarMargenesPersonalizados) {
+        if (!$usarMargenesPersonalizados) {
+            // Usar margen fijo si no se quieren los personalizados
+            return [
+                'inferior' => 1.5,
+                'superior' => 1.5
+            ];
+        }
+        
+        // Definir márgenes variables según la edad (en porcentajes)
+        if ($edadDias >= 0 && $edadDias <= 14) {
+            return [
+                'inferior' => 5,  // -5%
+                'superior' => 10  // +10%
+            ];
+        } elseif ($edadDias <= 28) {
+            return [
+                'inferior' => 10, // -10%
+                'superior' => 15  // +15%
+            ];
+        } else {
+            return [
+                'inferior' => 15, // -15%
+                'superior' => 25  // +25%
+            ];
+        }
+    };
+    
+    // 4. Cargar TODAS las referencias de temperatura de una sola vez
+    $referenciasTemperatura = TemperaturaBroilers::orderBy('edad')->get();
+    $cacheReferencias = [];
+    $cacheMargenes = [];
+    
+    // Función auxiliar para encontrar la referencia para una edad
+    $obtenerReferenciaTemperatura = function($edadDias) use ($referenciasTemperatura, &$cacheReferencias) {
+        // Si ya tenemos esta edad en caché, devolver valor almacenado
+        if (isset($cacheReferencias[$edadDias])) {
+            return $cacheReferencias[$edadDias];
+        }
+        
+        // Intentar encontrar coincidencia exacta
+        $referenciaExacta = $referenciasTemperatura->firstWhere('edad', $edadDias);
+        if ($referenciaExacta) {
+            $cacheReferencias[$edadDias] = $referenciaExacta->temperatura;
+            return $referenciaExacta->temperatura;
+        }
+        
+        // Buscar la referencia más cercana
+        $refCercana = null;
+        $menorDiferencia = PHP_INT_MAX;
+        
+        foreach ($referenciasTemperatura as $ref) {
+            $diferencia = abs($ref->edad - $edadDias);
+            if ($diferencia < $menorDiferencia) {
+                $menorDiferencia = $diferencia;
+                $refCercana = $ref;
+            }
+        }
+        
+        // Guardar en caché y devolver
+        $temperatura = $refCercana ? $refCercana->temperatura : null;
+        $cacheReferencias[$edadDias] = $temperatura;
+        return $temperatura;
+    };
+    
+    // 5. Sensor de temperatura
+    $SENSOR_TEMPERATURA = 6;
+    
+    // 6. Obtener todas las lecturas individuales para la tabla de alertas
+    $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_TEMPERATURA)
+        ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+    
+    // 7. Obtener datos diarios para la gráfica
+    $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_TEMPERATURA)
+        ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+        ->select(
+            DB::raw('DATE(fecha) as dia'),
+            DB::raw('ROUND(AVG(valor),2) as temperatura_media'),
+            DB::raw('MIN(valor) as temperatura_min'),
+            DB::raw('MAX(valor) as temperatura_max'),
+            DB::raw('COUNT(*) as lecturas')
+        )
+        ->groupBy('dia')
+        ->orderBy('dia')
+        ->get();
+    
+    // 8. Preparar datos para la gráfica con referencias y rangos aceptables
+    $datosGrafica = [];
+    foreach ($datosDiarios as $dato) {
+        // Calcular edad de la camada para ese día
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)
+            ->diffInDays(Carbon::parse($dato->dia));
+        
+        // Obtener temperatura de referencia
+        $tempReferencia = $obtenerReferenciaTemperatura($edadDias);
+        
+        // Obtener márgenes para esta edad
+        $margenes = $obtenerMargenes($edadDias);
+        $margenInferior = $margenes['inferior'];
+        $margenSuperior = $margenes['superior'];
+        
+        // Calcular rangos aceptables de temperatura
+        $limiteInferior = $tempReferencia ? round($tempReferencia * (1 - $margenInferior/100), 2) : null;
+        $limiteSuperior = $tempReferencia ? round($tempReferencia * (1 + $margenSuperior/100), 2) : null;
+        
+        $datosGrafica[] = [
+            'fecha' => $dato->dia,
+            'temperatura_media' => $dato->temperatura_media,
+            'temperatura_min' => $dato->temperatura_min,
+            'temperatura_max' => $dato->temperatura_max,
+            'temperatura_referencia' => $tempReferencia,
+            'limite_inferior' => $limiteInferior,
+            'limite_superior' => $limiteSuperior,
+            'edad_dias' => $edadDias,
+            'lecturas' => $dato->lecturas
+        ];
+    }
+    
+    // 9. Preparar datos para la tabla de alertas (lecturas fuera de rango)
+    $alertas = [];
+    $totalFueraDeRango = 0;
+    
+    foreach ($todasLasLecturas as $lectura) {
+        $fechaLectura = Carbon::parse($lectura->fecha);
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fechaLectura);
+        
+        // Obtener temperatura de referencia
+        $tempReferencia = $obtenerReferenciaTemperatura($edadDias);
+        
+        // Si no hay referencia, no podemos comparar
+        if ($tempReferencia === null) {
+            continue;
+        }
+        
+        // Obtener márgenes para esta edad
+        $margenes = $obtenerMargenes($edadDias);
+        $margenInferior = $margenes['inferior'];
+        $margenSuperior = $margenes['superior'];
+        
+        // Calcular rangos aceptables
+        $limiteInferior = round($tempReferencia * (1 - $margenInferior/100), 2);
+        $limiteSuperior = round($tempReferencia * (1 + $margenSuperior/100), 2);
+        
+        $valorLectura = (float) $lectura->valor;
+        
+        // Verificar si está fuera del rango aceptable
+        if ($valorLectura < $limiteInferior || $valorLectura > $limiteSuperior) {
+            $tipo = $valorLectura < $limiteInferior ? 'baja' : 'alta';
+            $desviacion = round($valorLectura - $tempReferencia, 2);
+            $desviacionPorcentaje = round(($desviacion / $tempReferencia) * 100, 2);
+            
+            $alertas[] = [
+                'fecha' => $fechaLectura->format('Y-m-d'),
+                'hora' => $fechaLectura->format('H:i:s'),
+                'temperatura_medida' => $valorLectura,
+                'temperatura_referencia' => $tempReferencia,
+                'limite_inferior' => $limiteInferior,
+                'limite_superior' => $limiteSuperior,
+                'desviacion' => $desviacion,
+                'desviacion_porcentaje' => $desviacionPorcentaje,
+                'tipo' => $tipo,
+                'edad_dias' => $edadDias,
+                'margen_edad' => [
+                    'inferior' => "{$margenInferior}%",
+                    'superior' => "{$margenSuperior}%"
+                ]
+            ];
+            $totalFueraDeRango++;
+        }
+    }
+    
+    // 10. Calcular temperatura media global para el periodo
+    $temperaturaMediaGlobal = $todasLasLecturas->avg('valor');
+    $totalLecturas = $todasLasLecturas->count();
+    $porcentajeFueraDeRango = $totalLecturas > 0 ? 
+        round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
+    
+    // 11. Preparar respuesta completa
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'camada' => [
+            'id' => $camada->id_camada,
+            'nombre' => $camada->nombre_camada,
+            'tipo_ave' => $camada->tipo_ave,
+            'fecha_inicio' => $camada->fecha_hora_inicio
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin
+        ],
+        'configuracion' => [
+            'usar_margenes_personalizados' => $usarMargenesPersonalizados,
+            'rangos_alerta' => [
+                [
+                    'rango_edad' => '0-14 días',
+                    'margen_inferior' => '5%',
+                    'margen_superior' => '10%'
+                ],
+                [
+                    'rango_edad' => '15-28 días',
+                    'margen_inferior' => '10%',
+                    'margen_superior' => '15%'
+                ],
+                [
+                    'rango_edad' => '29+ días',
+                    'margen_inferior' => '15%',
+                    'margen_superior' => '25%'
+                ]
+            ]
+        ],
+        'resumen' => [
+            'temperatura_media_global' => round($temperaturaMediaGlobal, 2),
+            'total_lecturas' => $totalLecturas,
+            'lecturas_fuera_rango' => $totalFueraDeRango,
+            'porcentaje_fuera_rango' => $porcentajeFueraDeRango
+        ],
+        'datos_grafica' => $datosGrafica,
+        'alertas' => $alertas
     ], Response::HTTP_OK);
 }
 }
