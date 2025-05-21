@@ -1207,4 +1207,374 @@ public function getHumedadGraficaAlertas(Request $request, int $dispId): JsonRes
         'alertas' => $alertas
     ], Response::HTTP_OK);
 }
+
+/**
+ * Obtiene todas las lecturas individuales de temperatura o humedad en un rango de fechas
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @param string $tipoSensor Tipo de sensor ('temperatura' o 'humedad')
+ * @return JsonResponse
+ */
+public function getMedidasIndividuales(Request $request, int $dispId, string $tipoSensor): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'    => 'required|date',
+    ]);
+
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin');
+    
+    // 2. Cargar dispositivo
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    // 3. Determinar el ID del sensor según el tipo
+    $idSensor = $tipoSensor === 'temperatura' ? 6 : ($tipoSensor === 'humedad' ? 5 : null);
+    
+    if ($idSensor === null) {
+        return response()->json([
+            'error' => 'Tipo de sensor no válido. Use "temperatura" o "humedad".'
+        ], Response::HTTP_BAD_REQUEST);
+    }
+    
+    // 4. Cargar camada asociada
+    $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+        ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+        ->where(function ($query) use ($fechaInicio, $fechaFin) {
+            $query->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                  ->where(function ($q2) use ($fechaInicio) {
+                      $q2->whereNull('tb_camada.fecha_hora_final')
+                         ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                  });
+            });
+        })
+        ->select('tb_camada.*')
+        ->first();
+    
+    if (!$camada) {
+        return response()->json([
+            'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ]
+        ], Response::HTTP_OK);
+    }
+    
+    // 5. Obtener todas las lecturas individuales
+    $lecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $idSensor)
+        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+    
+    // 6. Calcular estadísticas básicas
+    $total = $lecturas->count();
+    $media = $total > 0 ? round($lecturas->avg('valor'), 2) : 0;
+    $minima = $total > 0 ? round($lecturas->min('valor'), 2) : 0;
+    $maxima = $total > 0 ? round($lecturas->max('valor'), 2) : 0;
+    
+    // 7. Preparar datos para la gráfica
+    $medidas = $lecturas->map(function ($lectura) {
+        return [
+            'valor' => (float) $lectura->valor,
+            'fecha' => $lectura->fecha,
+            'hora' => Carbon::parse($lectura->fecha)->format('H:i'),
+            'dia' => Carbon::parse($lectura->fecha)->format('Y-m-d')
+        ];
+    });
+    
+    // 8. Agrupar por día para obtener totales diarios
+    $porDia = $medidas->groupBy('dia')->map(function ($grupo) {
+        return [
+            'fecha' => $grupo[0]['dia'],
+            'total' => count($grupo),
+            'media' => round($grupo->avg('valor'), 2)
+        ];
+    })->values();
+    
+    // 9. Preparar respuesta
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'camada' => [
+            'id' => $camada->id_camada,
+            'nombre' => $camada->nombre_camada
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin
+        ],
+        'tipo_sensor' => $tipoSensor,
+        'estadisticas' => [
+            'total_lecturas' => $total,
+            'media' => $media,
+            'minima' => $minima,
+            'maxima' => $maxima
+        ],
+        'resumen_diario' => $porDia,
+        'medidas' => $medidas
+    ], Response::HTTP_OK);
+}
+
+/**
+ * Obtiene datos ambientales diarios para un dispositivo en una fecha específica
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
+public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha' => 'required|date',
+    ]);
+
+    $fecha = $request->query('fecha');
+    
+    // Usar fecha actual si no se proporciona
+    if (!$fecha) {
+        $fecha = Carbon::now()->format('Y-m-d');
+    }
+
+    // 2. Cargar dispositivo y camada asociada
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+        ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+        ->where('tb_camada.fecha_hora_inicio', '<=', $fecha)
+        ->where(function ($query) use ($fecha) {
+            $query->whereNull('tb_camada.fecha_hora_final')
+                 ->orWhere('tb_camada.fecha_hora_final', '>=', $fecha);
+        })
+        ->select('tb_camada.*')
+        ->first();
+    
+    if (!$camada) {
+        return response()->json([
+            'mensaje' => 'No se encontró una camada activa para este dispositivo en la fecha especificada',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ],
+            'fecha' => $fecha
+        ], Response::HTTP_OK);
+    }
+    
+    // 3. Calcular edad de la camada en este día
+    $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fecha);
+    
+    // 4. Definición de sensores
+    $SENSOR_TEMPERATURA = 6;
+    $SENSOR_HUMEDAD = 5;
+    $SENSOR_TEMPERATURA_SUELO = 12;
+    $SENSOR_HUMEDAD_SUELO = 13;
+    
+    // 5. Obtener lecturas para cada sensor en la fecha dada
+    $lecturas_temp = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_TEMPERATURA)
+        ->whereDate('fecha', $fecha)
+        ->get(['valor', 'fecha']);
+    
+    $lecturas_hum = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD)
+        ->whereDate('fecha', $fecha)
+        ->get(['valor', 'fecha']);
+    
+    $lecturas_temp_suelo = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_TEMPERATURA_SUELO)
+        ->whereDate('fecha', $fecha)
+        ->get(['valor', 'fecha']);
+    
+    $lecturas_hum_suelo = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD_SUELO)
+        ->whereDate('fecha', $fecha)
+        ->get(['valor', 'fecha']);
+    
+    // 6. Calcular medias
+    $temp_media = $lecturas_temp->count() > 0 ? round($lecturas_temp->avg('valor'), 1) : null;
+    $hum_media = $lecturas_hum->count() > 0 ? round($lecturas_hum->avg('valor'), 1) : null;
+    $temp_suelo_media = $lecturas_temp_suelo->count() > 0 ? round($lecturas_temp_suelo->avg('valor'), 1) : null;
+    $hum_suelo_media = $lecturas_hum_suelo->count() > 0 ? round($lecturas_hum_suelo->avg('valor'), 1) : null;
+    
+    // 7. Calcular índice de estrés calórico (IEC)
+    // Fórmula: IEC = Temperatura Ambiente (ºC) + Humedad relativa del aire (%)
+    $indice_estres_calorico = null;
+    if ($temp_media !== null && $hum_media !== null) {
+        $indice_estres_calorico = round($temp_media + $hum_media, 1);
+    }
+    
+    // 8. Calcular índice THI (Temperature Humidity Index)
+    // Fórmula: THI = (0,8 x Tª Ambiente (ºC)) + ((Hr del aire (%) / 100) x (Tª Ambiente – 14,4)) + 46,4
+    $indice_thi = null;
+    if ($temp_media !== null && $hum_media !== null) {
+        $indice_thi = round((0.8 * $temp_media) + (($hum_media / 100) * ($temp_media - 14.4)) + 46.4, 1);
+    }
+    
+    // 9. Obtener referencia de temperatura para este día
+    $temperatura_referencia = null;
+    try {
+        // Usar el método existente para obtener la temperatura de referencia
+        $temperatura_referencia = $this->getPesoReferencia($camada, $edadDias);
+    } catch (\Exception $e) {
+        Log::error("Error al obtener temperatura de referencia: " . $e->getMessage());
+    }
+    
+    // 10. Evaluar condiciones de alerta
+    $alerta_temperatura = null;
+    $alerta_humedad = null;
+    
+    // Definir rangos de temperatura aceptables según edad
+    $obtenerMargenes = function($edadDias) {
+        if ($edadDias >= 0 && $edadDias <= 14) {
+            return [
+                'inferior' => 5,  // -5%
+                'superior' => 10  // +10%
+            ];
+        } elseif ($edadDias <= 28) {
+            return [
+                'inferior' => 10, // -10%
+                'superior' => 15  // +15%
+            ];
+        } else {
+            return [
+                'inferior' => 15, // -15%
+                'superior' => 25  // +25%
+            ];
+        }
+    };
+    
+    // Definir rangos de humedad aceptables según edad
+    $obtenerRangosHumedad = function($edadDias) {
+        if ($edadDias >= 0 && $edadDias <= 3) {
+            return [
+                'min' => 55,
+                'max' => 75
+            ];
+        } elseif ($edadDias <= 14) {
+            return [
+                'min' => 50,
+                'max' => 70
+            ];
+        } else {
+            return [
+                'min' => 45,
+                'max' => 65
+            ];
+        }
+    };
+    
+    // Verificar alerta de temperatura
+    if ($temp_media !== null && $temperatura_referencia !== null) {
+        $margenes = $obtenerMargenes($edadDias);
+        $limite_inferior = round($temperatura_referencia * (1 - $margenes['inferior']/100), 1);
+        $limite_superior = round($temperatura_referencia * (1 + $margenes['superior']/100), 1);
+        
+        if ($temp_media < $limite_inferior) {
+            $alerta_temperatura = [
+                'tipo' => 'baja',
+                'valor' => $temp_media,
+                'referencia' => $temperatura_referencia,
+                'limite' => $limite_inferior,
+                'desviacion' => round($temp_media - $temperatura_referencia, 1),
+                'desviacion_porcentaje' => round((($temp_media - $temperatura_referencia) / $temperatura_referencia) * 100, 1)
+            ];
+        } elseif ($temp_media > $limite_superior) {
+            $alerta_temperatura = [
+                'tipo' => 'alta',
+                'valor' => $temp_media,
+                'referencia' => $temperatura_referencia,
+                'limite' => $limite_superior,
+                'desviacion' => round($temp_media - $temperatura_referencia, 1),
+                'desviacion_porcentaje' => round((($temp_media - $temperatura_referencia) / $temperatura_referencia) * 100, 1)
+            ];
+        }
+    }
+    
+    // Verificar alerta de humedad
+    if ($hum_media !== null) {
+        $rangos_humedad = $obtenerRangosHumedad($edadDias);
+        $humedad_referencia = ($rangos_humedad['min'] + $rangos_humedad['max']) / 2;
+        
+        if ($hum_media < $rangos_humedad['min']) {
+            $alerta_humedad = [
+                'tipo' => 'baja',
+                'valor' => $hum_media,
+                'referencia' => $humedad_referencia,
+                'limite' => $rangos_humedad['min'],
+                'desviacion' => round($hum_media - $humedad_referencia, 1),
+                'desviacion_porcentaje' => round((($hum_media - $humedad_referencia) / $humedad_referencia) * 100, 1)
+            ];
+        } elseif ($hum_media > $rangos_humedad['max']) {
+            $alerta_humedad = [
+                'tipo' => 'alta',
+                'valor' => $hum_media,
+                'referencia' => $humedad_referencia,
+                'limite' => $rangos_humedad['max'],
+                'desviacion' => round($hum_media - $humedad_referencia, 1),
+                'desviacion_porcentaje' => round((($hum_media - $humedad_referencia) / $humedad_referencia) * 100, 1)
+            ];
+        }
+    }
+    
+    // 11. Preparar respuesta
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'camada' => [
+            'id' => $camada->id_camada,
+            'nombre' => $camada->nombre_camada,
+            'tipo_ave' => $camada->tipo_ave,
+            'fecha_inicio' => $camada->fecha_hora_inicio,
+            'edad_dias' => $edadDias
+        ],
+        'fecha' => $fecha,
+        'lecturas' => [
+            'temperatura' => [
+                'valor' => $temp_media,
+                'total_lecturas' => $lecturas_temp->count(),
+                'ultima_lectura' => $lecturas_temp->count() > 0 ? $lecturas_temp->sortByDesc('fecha')->first()->fecha : null,
+                'alerta' => $alerta_temperatura
+            ],
+            'humedad' => [
+                'valor' => $hum_media,
+                'total_lecturas' => $lecturas_hum->count(),
+                'ultima_lectura' => $lecturas_hum->count() > 0 ? $lecturas_hum->sortByDesc('fecha')->first()->fecha : null,
+                'alerta' => $alerta_humedad
+            ],
+            'temperatura_suelo' => [
+                'valor' => $temp_suelo_media,
+                'total_lecturas' => $lecturas_temp_suelo->count(),
+                'ultima_lectura' => $lecturas_temp_suelo->count() > 0 ? $lecturas_temp_suelo->sortByDesc('fecha')->first()->fecha : null
+            ],
+            'humedad_suelo' => [
+                'valor' => $hum_suelo_media,
+                'total_lecturas' => $lecturas_hum_suelo->count(),
+                'ultima_lectura' => $lecturas_hum_suelo->count() > 0 ? $lecturas_hum_suelo->sortByDesc('fecha')->first()->fecha : null
+            ]
+        ],
+        'indices' => [
+            'estres_calorico' => $indice_estres_calorico,
+            'thi' => $indice_thi
+        ],
+        'referencias' => [
+            'temperatura' => [
+                'valor' => $temperatura_referencia,
+                'margenes' => $obtenerMargenes($edadDias)
+            ],
+            'humedad' => $obtenerRangosHumedad($edadDias)
+        ]
+    ], Response::HTTP_OK);
+}
+
 }
