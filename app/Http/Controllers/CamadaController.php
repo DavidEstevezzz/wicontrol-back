@@ -1971,4 +1971,344 @@ public function monitorearActividad(Request $request, int $dispId): JsonResponse
     ], Response::HTTP_OK);
 }
 
+/**
+ * Monitorea la intensidad de luz para un dispositivo en un rango de fechas
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
+public function monitorearLuz(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'nullable|date',
+        'fecha_fin'    => 'nullable|date|after_or_equal:fecha_inicio',
+    ]);
+
+    // Si solo se proporciona una fecha, usar esa fecha como único día
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin', $fechaInicio);
+    
+    // Si no se proporciona ninguna fecha, usar la fecha actual
+    if (!$fechaInicio) {
+        $fechaInicio = Carbon::now()->format('Y-m-d');
+        $fechaFin = $fechaInicio;
+    }
+
+    // 2. Cargar dispositivo
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    // 3. ID del sensor de luz
+    $SENSOR_LUZ = 4;
+    $UMBRAL_LUZ = 0.5; // Umbral para considerar luz encendida (en lux)
+    $TIEMPO_GRACIA_MINUTOS = 1; // Tiempo de gracia en minutos para unir periodos cercanos
+    
+    // 4. Obtener TODAS las lecturas de luz para el rango de fechas
+    $lecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_LUZ)
+        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+    
+    if ($lecturas->isEmpty()) {
+        return response()->json([
+            'mensaje' => 'No se encontraron lecturas de luz para el rango de fechas especificado',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin
+            ]
+        ], Response::HTTP_OK);
+    }
+    
+    // 5. Procesar las lecturas para determinar los periodos de luz
+    $periodosLuz = [];
+    $inicioLuz = null;
+    $finLuz = null;
+    
+    // Función para agregar un periodo completado a la lista
+    $agregarPeriodo = function($inicio, $fin) use (&$periodosLuz) {
+        if ($inicio && $fin) {
+            $duracion = Carbon::parse($inicio)->diffInSeconds(Carbon::parse($fin));
+            $periodosLuz[] = [
+                'inicio' => $inicio,
+                'fin' => $fin,
+                'duracion_segundos' => $duracion
+            ];
+        }
+    };
+    
+    foreach ($lecturas as $index => $lectura) {
+        $fechaActual = Carbon::parse($lectura->fecha);
+        $valor = (float)$lectura->valor;
+        
+        // Si el valor está por encima del umbral (luz encendida)
+        if ($valor >= $UMBRAL_LUZ) {
+            // Si no hay periodo activo, iniciamos uno nuevo
+            if ($inicioLuz === null) {
+                $inicioLuz = $lectura->fecha;
+            } 
+            
+            // Extendemos el final del periodo con el tiempo de gracia
+            $finLuz = Carbon::parse($lectura->fecha)->addMinutes($TIEMPO_GRACIA_MINUTOS)->format('Y-m-d H:i:s');
+        } 
+        // Si el valor está por debajo del umbral (luz apagada)
+        else {
+            // Solo finalizamos el periodo si ya pasó el tiempo de gracia desde la última lectura con luz
+            if ($inicioLuz !== null && $fechaActual > Carbon::parse($finLuz)) {
+                $agregarPeriodo($inicioLuz, $finLuz);
+                $inicioLuz = null;
+                $finLuz = null;
+            }
+        }
+        
+        // Si es la última lectura y hay un periodo de luz pendiente
+        if ($index === $lecturas->count() - 1 && $inicioLuz !== null) {
+            $agregarPeriodo($inicioLuz, $finLuz);
+        }
+    }
+    
+    // 6. Calcular estadísticas de luz usando TODAS las lecturas
+    $totalLecturas = $lecturas->count();
+    $totalConLuz = $lecturas->filter(function ($lectura) use ($UMBRAL_LUZ) {
+        return (float)$lectura->valor >= $UMBRAL_LUZ;
+    })->count();
+    
+    // Calcular el valor promedio de luz
+    $valorPromedioLuz = $lecturas->avg('valor');
+    
+    // Calcular el valor máximo y mínimo de luz
+    $valorMaximoLuz = $lecturas->max('valor');
+    $valorMinimoLuz = $lecturas->min('valor');
+    
+    // Calcular duración total del periodo analizado en segundos
+    $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
+    
+    // Calcular tiempo total de luz en segundos
+    $tiempoLuzTotal = collect($periodosLuz)->sum('duracion_segundos');
+    
+    // Convertir a horas, minutos y segundos
+    $horasLuz = floor($tiempoLuzTotal / 3600);
+    $minutosLuz = floor(($tiempoLuzTotal % 3600) / 60);
+    $segundosLuz = $tiempoLuzTotal % 60;
+    
+    // Calcular porcentajes
+    $porcentajeLuz = round(($tiempoLuzTotal / $duracionTotalSegundos) * 100, 2);
+    $porcentajeOscuridad = round(100 - $porcentajeLuz, 2);
+    
+    // 7. Preparar resumen diario si hay más de un día
+    $resumenDiario = [];
+    if ($fechaInicio !== $fechaFin) {
+        $periodo = CarbonPeriod::create($fechaInicio, $fechaFin);
+        
+        foreach ($periodo as $dia) {
+            $fechaDia = $dia->format('Y-m-d');
+            
+            // Filtrar lecturas para este día
+            $lecturasDelDia = $lecturas->filter(function($lectura) use ($fechaDia) {
+                return Carbon::parse($lectura->fecha)->format('Y-m-d') === $fechaDia;
+            });
+            
+            // Filtrar periodos de luz para este día
+            $periodosDelDia = collect($periodosLuz)->filter(function($periodo) use ($fechaDia) {
+                $inicioDia = Carbon::parse($periodo['inicio'])->format('Y-m-d');
+                $finDia = Carbon::parse($periodo['fin'])->format('Y-m-d');
+                
+                // Si el periodo cruza días, debemos considerar solo la parte que corresponde a este día
+                return ($inicioDia <= $fechaDia && $finDia >= $fechaDia);
+            });
+            
+            // Calcular tiempo de luz para este día
+            $tiempoLuzDia = 0;
+            
+            foreach ($periodosDelDia as $periodo) {
+                $inicioEnDia = max(Carbon::parse($periodo['inicio']), Carbon::parse($fechaDia . ' 00:00:00'));
+                $finEnDia = min(Carbon::parse($periodo['fin']), Carbon::parse($fechaDia . ' 23:59:59'));
+                
+                $tiempoLuzDia += $inicioEnDia->diffInSeconds($finEnDia);
+            }
+            
+            // Calcular porcentaje para este día
+            $duracionDiaSegundos = 86400; // 24 horas en segundos
+            $porcentajeLuzDia = round(($tiempoLuzDia / $duracionDiaSegundos) * 100, 2);
+            
+            // Calcular promedio de luz para este día
+            $promedioLuzDia = count($lecturasDelDia) > 0 ? $lecturasDelDia->avg('valor') : 0;
+            
+            $resumenDiario[] = [
+                'fecha' => $fechaDia,
+                'tiempo_luz_segundos' => $tiempoLuzDia,
+                'tiempo_luz_formateado' => sprintf('%02d:%02d:%02d', 
+                    floor($tiempoLuzDia / 3600),
+                    floor(($tiempoLuzDia % 3600) / 60),
+                    $tiempoLuzDia % 60
+                ),
+                'porcentaje_luz' => $porcentajeLuzDia,
+                'porcentaje_oscuridad' => round(100 - $porcentajeLuzDia, 2),
+                'promedio_lux' => round($promedioLuzDia, 2),
+                'total_lecturas' => count($lecturasDelDia),
+                'lecturas_con_luz' => $lecturasDelDia->filter(function ($l) use ($UMBRAL_LUZ) {
+                    return (float)$l->valor >= $UMBRAL_LUZ;
+                })->count()
+            ];
+        }
+    }
+    
+    // 8. Preparar distribución de luz por hora
+    $luzPorHora = [];
+    for ($hora = 0; $hora < 24; $hora++) {
+        $horaFormateada = str_pad($hora, 2, '0', STR_PAD_LEFT);
+        $luzPorHora[$horaFormateada] = [
+            'segundos' => 0,
+            'lecturas' => 0,
+            'promedio_lux' => 0,
+            'lecturas_con_luz' => 0
+        ];
+    }
+    
+    // Calcular estadísticas por hora usando todas las lecturas
+    foreach ($lecturas as $lectura) {
+        $hora = Carbon::parse($lectura->fecha)->format('H');
+        $valor = (float)$lectura->valor;
+        
+        // Incrementar contador de lecturas para esta hora
+        $luzPorHora[$hora]['lecturas']++;
+        
+        // Acumular el valor para calcular el promedio
+        $luzPorHora[$hora]['promedio_lux'] += $valor;
+        
+        // Contar lecturas por encima del umbral
+        if ($valor >= $UMBRAL_LUZ) {
+            $luzPorHora[$hora]['lecturas_con_luz']++;
+        }
+    }
+    
+    // Calcular segundos de luz por hora usando los periodos identificados
+    foreach ($periodosLuz as $periodo) {
+        $inicio = Carbon::parse($periodo['inicio']);
+        $fin = Carbon::parse($periodo['fin']);
+        
+        // Si inicio y fin están en la misma hora
+        if ($inicio->format('H') === $fin->format('H')) {
+            $hora = $inicio->format('H');
+            $luzPorHora[$hora]['segundos'] += $inicio->diffInSeconds($fin);
+        } 
+        // Si cruzan horas diferentes
+        else {
+            $periodoHora = clone $inicio;
+            $periodoHora->minute(0)->second(0);
+            
+            // Para cada hora entre inicio y fin
+            while ($periodoHora->format('YmdH') <= $fin->format('YmdH')) {
+                $hora = $periodoHora->format('H');
+                
+                // Para la primera hora (puede ser parcial)
+                if ($periodoHora->format('YmdH') === $inicio->format('YmdH')) {
+                    $finHora = (clone $periodoHora)->addHour();
+                    $luzPorHora[$hora]['segundos'] += $inicio->diffInSeconds(min($finHora, $fin));
+                } 
+                // Para la última hora (puede ser parcial)
+                elseif ($periodoHora->format('YmdH') === $fin->format('YmdH')) {
+                    $luzPorHora[$hora]['segundos'] += $periodoHora->diffInSeconds($fin);
+                } 
+                // Para horas completas en medio
+                elseif ($periodoHora > $inicio && $periodoHora->addHour() < $fin) {
+                    $luzPorHora[$hora]['segundos'] += 3600; // 1 hora completa
+                }
+                
+                $periodoHora->addHour();
+            }
+        }
+    }
+    
+    // Finalizar cálculos y formatear datos por hora
+    $luzPorHoraFormateada = [];
+    foreach ($luzPorHora as $hora => $datos) {
+        // Calcular promedio si hay lecturas
+        if ($datos['lecturas'] > 0) {
+            $datos['promedio_lux'] = round($datos['promedio_lux'] / $datos['lecturas'], 2);
+        }
+        
+        $minutos = round($datos['segundos'] / 60, 1);
+        $porcentaje = round(($datos['segundos'] / 3600) * 100, 1);
+        
+        $luzPorHoraFormateada[] = [
+            'hora' => $hora,
+            'minutos_luz' => $minutos,
+            'porcentaje_luz' => $porcentaje,
+            'promedio_lux' => $datos['promedio_lux'],
+            'total_lecturas' => $datos['lecturas'],
+            'lecturas_con_luz' => $datos['lecturas_con_luz'],
+            'porcentaje_lecturas_con_luz' => $datos['lecturas'] > 0 
+                ? round(($datos['lecturas_con_luz'] / $datos['lecturas']) * 100, 1) 
+                : 0
+        ];
+    }
+    
+    // 9. Preparar las medidas filtradas para visualización
+    // Esto mantiene todas las lecturas, pero marca claramente los periodos de luz
+    $medidasFiltradas = [];
+    
+    foreach ($lecturas as $lectura) {
+        $valor = (float)$lectura->valor;
+        $fechaLectura = Carbon::parse($lectura->fecha);
+        $enPeriodoLuz = false;
+        
+        // Determinar si esta lectura está en un periodo de luz identificado
+        foreach ($periodosLuz as $periodo) {
+            $inicioPeriodo = Carbon::parse($periodo['inicio']);
+            $finPeriodo = Carbon::parse($periodo['fin']);
+            
+            if ($fechaLectura >= $inicioPeriodo && $fechaLectura <= $finPeriodo) {
+                $enPeriodoLuz = true;
+                break;
+            }
+        }
+        
+        $medidasFiltradas[] = [
+            'fecha' => $lectura->fecha,
+            'valor' => $valor,
+            'en_periodo_luz' => $enPeriodoLuz,
+            'supera_umbral' => $valor >= $UMBRAL_LUZ
+        ];
+    }
+    
+    // 10. Preparar respuesta completa
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'duracion_total_segundos' => $duracionTotalSegundos
+        ],
+        'configuracion' => [
+            'umbral_lux' => $UMBRAL_LUZ,
+            'tiempo_gracia_minutos' => $TIEMPO_GRACIA_MINUTOS
+        ],
+        'resumen_luz' => [
+            'tiempo_total_segundos' => $tiempoLuzTotal,
+            'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasLuz, $minutosLuz, $segundosLuz),
+            'porcentaje_luz' => $porcentajeLuz,
+            'porcentaje_oscuridad' => $porcentajeOscuridad,
+            'total_lecturas' => $totalLecturas,
+            'lecturas_con_luz' => $totalConLuz,
+            'promedio_lux' => round($valorPromedioLuz, 2),
+            'maximo_lux' => round($valorMaximoLuz, 2),
+            'minimo_lux' => round($valorMinimoLuz, 2)
+        ],
+        'periodos_luz' => $periodosLuz,
+        'resumen_diario' => $resumenDiario,
+        'luz_por_hora' => $luzPorHoraFormateada,
+        'medidas_filtradas' => $medidasFiltradas
+    ], Response::HTTP_OK);
+}
+
 }
