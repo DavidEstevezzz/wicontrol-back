@@ -1330,6 +1330,13 @@ public function getMedidasIndividuales(Request $request, int $dispId, string $ti
  * @param int $dispId ID del dispositivo
  * @return JsonResponse
  */
+/**
+ * Obtiene datos ambientales diarios para un dispositivo en una fecha específica
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
 public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonResponse
 {
     // 1. Validar parámetros
@@ -1419,20 +1426,46 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
         $indice_thi = round((0.8 * $temp_media) + (($hum_media / 100) * ($temp_media - 14.4)) + 46.4, 1);
     }
     
-    // 9. Obtener referencia de temperatura para este día
-    $temperatura_referencia = null;
-    try {
-        // Usar el método existente para obtener la temperatura de referencia
-        $temperatura_referencia = $this->getPesoReferencia($camada, $edadDias);
-    } catch (\Exception $e) {
-        Log::error("Error al obtener temperatura de referencia: " . $e->getMessage());
-    }
+    // 9. Obtener referencias de temperatura
+    $referenciasTemperatura = TemperaturaBroilers::orderBy('edad')->get();
+    $cacheReferencias = [];
     
-    // 10. Evaluar condiciones de alerta
-    $alerta_temperatura = null;
-    $alerta_humedad = null;
+    // Función auxiliar para obtener la temperatura de referencia por edad
+    $obtenerReferenciaTemperatura = function($edadDias) use ($referenciasTemperatura, &$cacheReferencias) {
+        // Si ya tenemos esta edad en caché, devolver valor almacenado
+        if (isset($cacheReferencias[$edadDias])) {
+            return $cacheReferencias[$edadDias];
+        }
+        
+        // Intentar encontrar coincidencia exacta
+        $referenciaExacta = $referenciasTemperatura->firstWhere('edad', $edadDias);
+        if ($referenciaExacta) {
+            $cacheReferencias[$edadDias] = $referenciaExacta->temperatura;
+            return $referenciaExacta->temperatura;
+        }
+        
+        // Buscar la referencia más cercana
+        $refCercana = null;
+        $menorDiferencia = PHP_INT_MAX;
+        
+        foreach ($referenciasTemperatura as $ref) {
+            $diferencia = abs($ref->edad - $edadDias);
+            if ($diferencia < $menorDiferencia) {
+                $menorDiferencia = $diferencia;
+                $refCercana = $ref;
+            }
+        }
+        
+        // Guardar en caché y devolver
+        $temperatura = $refCercana ? $refCercana->temperatura : null;
+        $cacheReferencias[$edadDias] = $temperatura;
+        return $temperatura;
+    };
     
-    // Definir rangos de temperatura aceptables según edad
+    // 10. Obtener la temperatura de referencia para esta edad
+    $temperatura_referencia = $obtenerReferenciaTemperatura($edadDias);
+    
+    // 11. Definir márgenes de temperatura según edad
     $obtenerMargenes = function($edadDias) {
         if ($edadDias >= 0 && $edadDias <= 14) {
             return [
@@ -1452,7 +1485,7 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
         }
     };
     
-    // Definir rangos de humedad aceptables según edad
+    // 12. Definir rangos de humedad aceptables según edad
     $obtenerRangosHumedad = function($edadDias) {
         if ($edadDias >= 0 && $edadDias <= 3) {
             return [
@@ -1472,38 +1505,42 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
         }
     };
     
-    // Verificar alerta de temperatura
+    // 13. Obtener márgenes y calcular límites para temperatura
+    $margenes = $obtenerMargenes($edadDias);
+    $limite_inferior_temp = $temperatura_referencia ? round($temperatura_referencia * (1 - $margenes['inferior']/100), 1) : null;
+    $limite_superior_temp = $temperatura_referencia ? round($temperatura_referencia * (1 + $margenes['superior']/100), 1) : null;
+    
+    // 14. Obtener rangos para humedad
+    $rangos_humedad = $obtenerRangosHumedad($edadDias);
+    $humedad_referencia = ($rangos_humedad['min'] + $rangos_humedad['max']) / 2;
+    
+    // 15. Evaluar alertas de temperatura
+    $alerta_temperatura = null;
     if ($temp_media !== null && $temperatura_referencia !== null) {
-        $margenes = $obtenerMargenes($edadDias);
-        $limite_inferior = round($temperatura_referencia * (1 - $margenes['inferior']/100), 1);
-        $limite_superior = round($temperatura_referencia * (1 + $margenes['superior']/100), 1);
-        
-        if ($temp_media < $limite_inferior) {
+        if ($temp_media < $limite_inferior_temp) {
             $alerta_temperatura = [
                 'tipo' => 'baja',
                 'valor' => $temp_media,
                 'referencia' => $temperatura_referencia,
-                'limite' => $limite_inferior,
+                'limite' => $limite_inferior_temp,
                 'desviacion' => round($temp_media - $temperatura_referencia, 1),
                 'desviacion_porcentaje' => round((($temp_media - $temperatura_referencia) / $temperatura_referencia) * 100, 1)
             ];
-        } elseif ($temp_media > $limite_superior) {
+        } elseif ($temp_media > $limite_superior_temp) {
             $alerta_temperatura = [
                 'tipo' => 'alta',
                 'valor' => $temp_media,
                 'referencia' => $temperatura_referencia,
-                'limite' => $limite_superior,
+                'limite' => $limite_superior_temp,
                 'desviacion' => round($temp_media - $temperatura_referencia, 1),
                 'desviacion_porcentaje' => round((($temp_media - $temperatura_referencia) / $temperatura_referencia) * 100, 1)
             ];
         }
     }
     
-    // Verificar alerta de humedad
+    // 16. Evaluar alertas de humedad
+    $alerta_humedad = null;
     if ($hum_media !== null) {
-        $rangos_humedad = $obtenerRangosHumedad($edadDias);
-        $humedad_referencia = ($rangos_humedad['min'] + $rangos_humedad['max']) / 2;
-        
         if ($hum_media < $rangos_humedad['min']) {
             $alerta_humedad = [
                 'tipo' => 'baja',
@@ -1525,7 +1562,7 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
         }
     }
     
-    // 11. Preparar respuesta
+    // 17. Preparar respuesta
     return response()->json([
         'dispositivo' => [
             'id' => $dispId,
@@ -1570,9 +1607,14 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
         'referencias' => [
             'temperatura' => [
                 'valor' => $temperatura_referencia,
-                'margenes' => $obtenerMargenes($edadDias)
+                'limite_inferior' => $limite_inferior_temp,
+                'limite_superior' => $limite_superior_temp,
+                'margenes' => $margenes
             ],
-            'humedad' => $obtenerRangosHumedad($edadDias)
+            'humedad' => [
+                'valor' => $humedad_referencia,
+                'limites' => $rangos_humedad
+            ]
         ]
     ], Response::HTTP_OK);
 }
