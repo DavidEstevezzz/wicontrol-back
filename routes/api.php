@@ -64,6 +64,7 @@ Route::get('dispositivos/{dispId}/humedad-grafica-alertas', [CamadaController::c
 Route::get('/dispositivos/{dispId}/datos-ambientales-diarios', [CamadaController::class, 'getDatosAmbientalesDiarios']);
 Route::get('/dispositivos/{dispId}/medidas/{tipoSensor}', [CamadaController::class, 'getMedidasIndividuales']);
 Route::get('dispositivos/{dispId}/actividad', [CamadaController::class, 'monitorearActividad']);
+Route::get('dispositivos/{dispId}/luz', [CamadaController::class, 'monitorearLuz']);
 
 
 Route::apiResource('dispositivos',    DispositivoController::class);
