@@ -1412,18 +1412,74 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
     $temp_suelo_media = $lecturas_temp_suelo->count() > 0 ? round($lecturas_temp_suelo->avg('valor'), 1) : null;
     $hum_suelo_media = $lecturas_hum_suelo->count() > 0 ? round($lecturas_hum_suelo->avg('valor'), 1) : null;
     
-    // 7. Calcular índice de estrés calórico (IEC)
+     // 7. Calcular índice de estrés calórico (IEC)
     // Fórmula: IEC = Temperatura Ambiente (ºC) + Humedad relativa del aire (%)
     $indice_estres_calorico = null;
+    $nivel_estres_calorico = null;
     if ($temp_media !== null && $hum_media !== null) {
         $indice_estres_calorico = round($temp_media + $hum_media, 1);
+        
+        // Determinar nivel de estrés calórico según índice
+        if ($indice_estres_calorico <= 105) {
+            $nivel_estres_calorico = [
+                'nivel' => 'normal',
+                'color' => 'green',
+                'mensaje' => 'Condiciones normales'
+            ];
+        } elseif ($indice_estres_calorico <= 120) {
+            $nivel_estres_calorico = [
+                'nivel' => 'alerta',
+                'color' => 'yellow',
+                'mensaje' => 'Alerta: Estrés calórico moderado'
+            ];
+        } elseif ($indice_estres_calorico <= 130) {
+            $nivel_estres_calorico = [
+                'nivel' => 'peligro',
+                'color' => 'orange',
+                'mensaje' => 'Peligro: Estrés calórico alto'
+            ];
+        } else {
+            $nivel_estres_calorico = [
+                'nivel' => 'emergencia',
+                'color' => 'red',
+                'mensaje' => 'Emergencia: Estrés calórico extremo'
+            ];
+        }
     }
     
     // 8. Calcular índice THI (Temperature Humidity Index)
     // Fórmula: THI = (0,8 x Tª Ambiente (ºC)) + ((Hr del aire (%) / 100) x (Tª Ambiente – 14,4)) + 46,4
     $indice_thi = null;
+    $nivel_thi = null;
     if ($temp_media !== null && $hum_media !== null) {
         $indice_thi = round((0.8 * $temp_media) + (($hum_media / 100) * ($temp_media - 14.4)) + 46.4, 1);
+        
+        // Determinar nivel THI según índice
+        if ($indice_thi <= 72) {
+            $nivel_thi = [
+                'nivel' => 'normal',
+                'color' => 'green',
+                'mensaje' => 'THI normal: Condiciones óptimas'
+            ];
+        } elseif ($indice_thi <= 79) {
+            $nivel_thi = [
+                'nivel' => 'alerta',
+                'color' => 'yellow',
+                'mensaje' => 'THI elevado: Alerta'
+            ];
+        } elseif ($indice_thi <= 88) {
+            $nivel_thi = [
+                'nivel' => 'peligro',
+                'color' => 'orange',
+                'mensaje' => 'THI alto: Peligro'
+            ];
+        } else {
+            $nivel_thi = [
+                'nivel' => 'emergencia',
+                'color' => 'red',
+                'mensaje' => 'THI crítico: Emergencia'
+            ];
+        }
     }
     
     // 9. Obtener referencias de temperatura
@@ -1601,8 +1657,26 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
             ]
         ],
         'indices' => [
-            'estres_calorico' => $indice_estres_calorico,
-            'thi' => $indice_thi
+            'estres_calorico' => [
+                'valor' => $indice_estres_calorico,
+                'nivel' => $nivel_estres_calorico,
+                'rangos' => [
+                    ['min' => null, 'max' => 105, 'nivel' => 'normal', 'color' => 'green'],
+                    ['min' => 105, 'max' => 120, 'nivel' => 'alerta', 'color' => 'yellow'],
+                    ['min' => 120, 'max' => 130, 'nivel' => 'peligro', 'color' => 'orange'],
+                    ['min' => 130, 'max' => null, 'nivel' => 'emergencia', 'color' => 'red']
+                ]
+            ],
+            'thi' => [
+                'valor' => $indice_thi,
+                'nivel' => $nivel_thi,
+                'rangos' => [
+                    ['min' => null, 'max' => 72, 'nivel' => 'normal', 'color' => 'green'],
+                    ['min' => 72, 'max' => 79, 'nivel' => 'alerta', 'color' => 'yellow'],
+                    ['min' => 79, 'max' => 88, 'nivel' => 'peligro', 'color' => 'orange'],
+                    ['min' => 88, 'max' => null, 'nivel' => 'emergencia', 'color' => 'red']
+                ]
+            ]
         ],
         'referencias' => [
             'temperatura' => [
