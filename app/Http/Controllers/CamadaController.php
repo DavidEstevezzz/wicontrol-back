@@ -1693,4 +1693,282 @@ public function getDatosAmbientalesDiarios(Request $request, int $dispId): JsonR
     ], Response::HTTP_OK);
 }
 
+/**
+ * Monitorea la actividad de aves para un dispositivo en un rango de fechas
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
+public function monitorearActividad(Request $request, int $dispId): JsonResponse
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'nullable|date',
+        'fecha_fin'    => 'nullable|date|after_or_equal:fecha_inicio',
+    ]);
+
+    // Si solo se proporciona una fecha, usar esa fecha como único día
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin', $fechaInicio);
+    
+    // Si no se proporciona ninguna fecha, usar la fecha actual
+    if (!$fechaInicio) {
+        $fechaInicio = Carbon::now()->format('Y-m-d');
+        $fechaFin = $fechaInicio;
+    }
+
+    // 2. Cargar dispositivo
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
+    
+    // 3. ID del sensor de actividad
+    $SENSOR_ACTIVIDAD = 3;
+    
+    // 4. Obtener lecturas de actividad para el rango de fechas
+    $lecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_ACTIVIDAD)
+        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+    
+    if ($lecturas->isEmpty()) {
+        return response()->json([
+            'mensaje' => 'No se encontraron lecturas de actividad para el rango de fechas especificado',
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin
+            ]
+        ], Response::HTTP_OK);
+    }
+    
+    // 5. Procesar las lecturas para determinar los periodos de actividad
+    $periodosActividad = [];
+    $inicioActividad = null;
+    $finActividad = null;
+    $actividadExtendida = false;
+    
+    // Función para agregar un periodo completado a la lista
+    $agregarPeriodo = function($inicio, $fin) use (&$periodosActividad) {
+        if ($inicio && $fin) {
+            $duracion = Carbon::parse($inicio)->diffInSeconds(Carbon::parse($fin));
+            $periodosActividad[] = [
+                'inicio' => $inicio,
+                'fin' => $fin,
+                'duracion_segundos' => $duracion
+            ];
+        }
+    };
+    
+    foreach ($lecturas as $index => $lectura) {
+        $fechaActual = Carbon::parse($lectura->fecha);
+        $valor = (int)$lectura->valor;
+        
+        // Si encontramos un 1 (actividad)
+        if ($valor === 1) {
+            // Si no hay periodo activo, iniciamos uno nuevo
+            if ($inicioActividad === null) {
+                $inicioActividad = $lectura->fecha;
+                $finActividad = Carbon::parse($lectura->fecha)->addMinute()->format('Y-m-d H:i:s');
+            } 
+            // Si ya hay un periodo activo, extendemos su duración
+            else {
+                $finActividad = max($finActividad, Carbon::parse($lectura->fecha)->addMinute()->format('Y-m-d H:i:s'));
+            }
+            $actividadExtendida = true;
+        } 
+        // Si encontramos un 0 (inactividad)
+        else {
+            // Solo procesamos el 0 si ya pasó el tiempo de gracia del último 1
+            if ($inicioActividad !== null && $fechaActual > Carbon::parse($finActividad)) {
+                $agregarPeriodo($inicioActividad, $finActividad);
+                $inicioActividad = null;
+                $finActividad = null;
+                $actividadExtendida = false;
+            }
+        }
+        
+        // Si es la última lectura y hay un periodo activo pendiente
+        if ($index === $lecturas->count() - 1 && $inicioActividad !== null) {
+            $agregarPeriodo($inicioActividad, $finActividad);
+        }
+    }
+    
+    // 6. Calcular estadísticas de actividad
+    $totalLecturas = $lecturas->count();
+    $totalActivas = $lecturas->where('valor', 1)->count();
+    
+    // Calcular duración total del periodo analizado en segundos
+    $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
+    
+    // Calcular tiempo total de actividad en segundos
+    $tiempoActividadTotal = collect($periodosActividad)->sum('duracion_segundos');
+    
+    // Convertir a horas, minutos y segundos
+    $horasActividad = floor($tiempoActividadTotal / 3600);
+    $minutosActividad = floor(($tiempoActividadTotal % 3600) / 60);
+    $segundosActividad = $tiempoActividadTotal % 60;
+    
+    // Calcular porcentajes
+    $porcentajeActividad = round(($tiempoActividadTotal / $duracionTotalSegundos) * 100, 2);
+    $porcentajeInactividad = round(100 - $porcentajeActividad, 2);
+    
+    // 7. Preparar resumen diario si hay más de un día
+    $resumenDiario = [];
+    if ($fechaInicio !== $fechaFin) {
+        $periodo = CarbonPeriod::create($fechaInicio, $fechaFin);
+        
+        foreach ($periodo as $dia) {
+            $fechaDia = $dia->format('Y-m-d');
+            
+            // Filtrar periodos de actividad para este día
+            $periodosDelDia = collect($periodosActividad)->filter(function($periodo) use ($fechaDia) {
+                $inicioDia = Carbon::parse($periodo['inicio'])->format('Y-m-d');
+                $finDia = Carbon::parse($periodo['fin'])->format('Y-m-d');
+                
+                // Si el periodo cruza días, debemos considerar solo la parte que corresponde a este día
+                return ($inicioDia <= $fechaDia && $finDia >= $fechaDia);
+            });
+            
+            // Calcular tiempo de actividad para este día
+            $tiempoActividadDia = 0;
+            
+            foreach ($periodosDelDia as $periodo) {
+                $inicioEnDia = max(Carbon::parse($periodo['inicio']), Carbon::parse($fechaDia . ' 00:00:00'));
+                $finEnDia = min(Carbon::parse($periodo['fin']), Carbon::parse($fechaDia . ' 23:59:59'));
+                
+                $tiempoActividadDia += $inicioEnDia->diffInSeconds($finEnDia);
+            }
+            
+            // Calcular porcentaje para este día
+            $duracionDiaSegundos = 86400; // 24 horas en segundos
+            $porcentajeActividadDia = round(($tiempoActividadDia / $duracionDiaSegundos) * 100, 2);
+            
+            $resumenDiario[] = [
+                'fecha' => $fechaDia,
+                'tiempo_actividad_segundos' => $tiempoActividadDia,
+                'tiempo_actividad_formateado' => sprintf('%02d:%02d:%02d', 
+                    floor($tiempoActividadDia / 3600),
+                    floor(($tiempoActividadDia % 3600) / 60),
+                    $tiempoActividadDia % 60
+                ),
+                'porcentaje_actividad' => $porcentajeActividadDia,
+                'porcentaje_inactividad' => round(100 - $porcentajeActividadDia, 2)
+            ];
+        }
+    }
+    
+    // 8. Preparar distribución de actividad por hora
+    $actividadPorHora = [];
+    for ($hora = 0; $hora < 24; $hora++) {
+        $horaFormateada = str_pad($hora, 2, '0', STR_PAD_LEFT);
+        $actividadPorHora[$horaFormateada] = 0;
+    }
+    
+    // Calcular segundos de actividad por hora
+    foreach ($periodosActividad as $periodo) {
+        $inicio = Carbon::parse($periodo['inicio']);
+        $fin = Carbon::parse($periodo['fin']);
+        
+        // Si inicio y fin están en la misma hora
+        if ($inicio->format('H') === $fin->format('H')) {
+            $hora = $inicio->format('H');
+            $actividadPorHora[$hora] += $inicio->diffInSeconds($fin);
+        } 
+        // Si cruzan horas diferentes
+        else {
+            $periodoHora = clone $inicio;
+            $periodoHora->minute(0)->second(0);
+            
+            // Para cada hora entre inicio y fin
+            while ($periodoHora->format('YmdH') <= $fin->format('YmdH')) {
+                $hora = $periodoHora->format('H');
+                
+                // Para la primera hora (puede ser parcial)
+                if ($periodoHora->format('YmdH') === $inicio->format('YmdH')) {
+                    $finHora = (clone $periodoHora)->addHour();
+                    $actividadPorHora[$hora] += $inicio->diffInSeconds(min($finHora, $fin));
+                } 
+                // Para la última hora (puede ser parcial)
+                elseif ($periodoHora->format('YmdH') === $fin->format('YmdH')) {
+                    $actividadPorHora[$hora] += $periodoHora->diffInSeconds($fin);
+                } 
+                // Para horas completas en medio
+                elseif ($periodoHora > $inicio && $periodoHora->addHour() < $fin) {
+                    $actividadPorHora[$hora] += 3600; // 1 hora completa
+                }
+                
+                $periodoHora->addHour();
+            }
+        }
+    }
+    
+    // Convertir segundos a minutos por hora y calcular porcentajes
+    $actividadPorHoraFormateada = [];
+    foreach ($actividadPorHora as $hora => $segundos) {
+        $minutos = round($segundos / 60, 1);
+        $porcentaje = round(($segundos / 3600) * 100, 1);
+        
+        $actividadPorHoraFormateada[] = [
+            'hora' => $hora,
+            'minutos_actividad' => $minutos,
+            'porcentaje' => $porcentaje
+        ];
+    }
+    
+    // 9. Preparar las medidas filtradas (eliminar 0s dentro del periodo de actividad)
+    $medidasFiltradas = [];
+    $ultimaMedidaActiva = null;
+    
+    foreach ($lecturas as $lectura) {
+        $valor = (int)$lectura->valor;
+        $fechaLectura = Carbon::parse($lectura->fecha);
+        
+        // Si es una lectura de actividad, siempre la incluimos
+        if ($valor === 1) {
+            $medidasFiltradas[] = [
+                'fecha' => $lectura->fecha,
+                'valor' => $valor
+            ];
+            $ultimaMedidaActiva = $fechaLectura;
+        } 
+        // Si es inactividad, solo la incluimos si no estamos en periodo extendido
+        elseif ($ultimaMedidaActiva === null || $fechaLectura > $ultimaMedidaActiva->copy()->addMinute()) {
+            $medidasFiltradas[] = [
+                'fecha' => $lectura->fecha,
+                'valor' => $valor
+            ];
+        }
+    }
+    
+    // 10. Preparar respuesta completa
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'duracion_total_segundos' => $duracionTotalSegundos
+        ],
+        'resumen_actividad' => [
+            'tiempo_total_segundos' => $tiempoActividadTotal,
+            'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasActividad, $minutosActividad, $segundosActividad),
+            'porcentaje_actividad' => $porcentajeActividad,
+            'porcentaje_inactividad' => $porcentajeInactividad,
+            'total_lecturas' => $totalLecturas,
+            'lecturas_actividad' => $totalActivas
+        ],
+        'periodos_actividad' => $periodosActividad,
+        'resumen_diario' => $resumenDiario,
+        'actividad_por_hora' => $actividadPorHoraFormateada,
+        'medidas_filtradas' => $medidasFiltradas
+    ], Response::HTTP_OK);
+}
+
 }
