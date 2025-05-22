@@ -1100,206 +1100,300 @@ class CamadaController extends Controller
      * @return JsonResponse
      */
     public function getHumedadGraficaAlertas(Request $request, int $dispId): JsonResponse
-    {
-        // 1. Validar parámetros
-        $request->validate([
-            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
-            'fecha_fin'    => 'required|date',
-        ]);
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'    => 'required|date',
+    ]);
 
-        $fechaInicio = $request->query('fecha_inicio');
-        $fechaFin = $request->query('fecha_fin');
+    $fechaInicio = $request->query('fecha_inicio');
+    $fechaFin = $request->query('fecha_fin');
 
-        // 2. Cargar dispositivo y camada asociada
-        $dispositivo = Dispositivo::findOrFail($dispId);
-        $serie = $dispositivo->numero_serie;
+    // 2. Cargar dispositivo y camada asociada
+    $dispositivo = Dispositivo::findOrFail($dispId);
+    $serie = $dispositivo->numero_serie;
 
-        $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
-            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
-            ->where(function ($query) use ($fechaInicio, $fechaFin) {
-                $query->where(function ($q) use ($fechaInicio, $fechaFin) {
-                    $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
-                        ->where(function ($q2) use ($fechaInicio) {
-                            $q2->whereNull('tb_camada.fecha_hora_final')
-                                ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
-                        });
-                });
-            })
-            ->select('tb_camada.*')
-            ->first();
+    $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+        ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+        ->where(function ($query) use ($fechaInicio, $fechaFin) {
+            $query->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                    ->where(function ($q2) use ($fechaInicio) {
+                        $q2->whereNull('tb_camada.fecha_hora_final')
+                            ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                    });
+            });
+        })
+        ->select('tb_camada.*')
+        ->first();
 
-        if (!$camada) {
-            return response()->json([
-                'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
-                'dispositivo' => [
-                    'id' => $dispId,
-                    'numero_serie' => $serie
-                ]
-            ], Response::HTTP_OK);
-        }
-
-        // 3. Función para determinar rangos de humedad aceptables según edad
-        $obtenerRangosHumedad = function ($edadDias) {
-            if ($edadDias >= 0 && $edadDias <= 3) {
-                return [
-                    'min' => 55,
-                    'max' => 75
-                ];
-            } elseif ($edadDias <= 14) {
-                return [
-                    'min' => 50,
-                    'max' => 70
-                ];
-            } else {
-                return [
-                    'min' => 45,
-                    'max' => 65
-                ];
-            }
-        };
-
-        // 4. Sensor de humedad
-        $SENSOR_HUMEDAD = 5;
-
-        // 5. Obtener todas las lecturas individuales para la tabla de alertas
-        $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
-            ->where('id_sensor', $SENSOR_HUMEDAD)
-            ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])  // ✅ Incluye todo el último día
-            ->orderBy('fecha')
-            ->get(['valor', 'fecha']);
-
-        // 6. Obtener datos diarios para la gráfica
-        $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
-            ->where('id_sensor', $SENSOR_HUMEDAD)
-            ->whereBetween('fecha', [$fechaInicio, $fechaFin])
-            ->select(
-                DB::raw('DATE(fecha) as dia'),
-                DB::raw('ROUND(AVG(valor),2) as humedad_media'),
-                DB::raw('MIN(valor) as humedad_min'),
-                DB::raw('MAX(valor) as humedad_max'),
-                DB::raw('COUNT(*) as lecturas')
-            )
-            ->groupBy('dia')
-            ->orderBy('dia')
-            ->get();
-
-        // 7. Preparar datos para la gráfica con referencias y rangos aceptables
-        $datosGrafica = [];
-        foreach ($datosDiarios as $dato) {
-            // Calcular edad de la camada para ese día
-            $edadDias = Carbon::parse($camada->fecha_hora_inicio)
-                ->diffInDays(Carbon::parse($dato->dia));
-
-            // Obtener rangos de humedad para esta edad
-            $rangos = $obtenerRangosHumedad($edadDias);
-            $humedadMin = $rangos['min'];
-            $humedadMax = $rangos['max'];
-
-            $humedadReferencia = ($humedadMin + $humedadMax) / 2; // Punto medio del rango como referencia
-
-            $datosGrafica[] = [
-                'fecha' => $dato->dia,
-                'humedad_media' => $dato->humedad_media,
-                'humedad_min' => $dato->humedad_min,
-                'humedad_max' => $dato->humedad_max,
-                'humedad_referencia' => $humedadReferencia,
-                'limite_inferior' => $humedadMin,
-                'limite_superior' => $humedadMax,
-                'edad_dias' => $edadDias,
-                'lecturas' => $dato->lecturas
-            ];
-        }
-
-        // 8. Preparar datos para la tabla de alertas (lecturas fuera de rango)
-        $alertas = [];
-        $totalFueraDeRango = 0;
-
-        foreach ($todasLasLecturas as $lectura) {
-            $fechaLectura = Carbon::parse($lectura->fecha);
-            $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fechaLectura);
-
-            // Obtener rangos de humedad para esta edad
-            $rangos = $obtenerRangosHumedad($edadDias);
-            $humedadMin = $rangos['min'];
-            $humedadMax = $rangos['max'];
-            $humedadReferencia = ($humedadMin + $humedadMax) / 2;
-
-            $valorLectura = (float) $lectura->valor;
-
-            // Verificar si está fuera del rango aceptable
-            if ($valorLectura < $humedadMin || $valorLectura > $humedadMax) {
-                $tipo = $valorLectura < $humedadMin ? 'baja' : 'alta';
-                $desviacion = round($valorLectura - $humedadReferencia, 2);
-                $desviacionPorcentaje = round(($desviacion / $humedadReferencia) * 100, 2);
-
-                $alertas[] = [
-                    'fecha' => $fechaLectura->format('Y-m-d'),
-                    'hora' => $fechaLectura->format('H:i:s'),
-                    'humedad_medida' => $valorLectura,
-                    'humedad_referencia' => $humedadReferencia,
-                    'limite_inferior' => $humedadMin,
-                    'limite_superior' => $humedadMax,
-                    'desviacion' => $desviacion,
-                    'desviacion_porcentaje' => $desviacionPorcentaje,
-                    'tipo' => $tipo,
-                    'edad_dias' => $edadDias,
-                    'rango_edad' => $edadDias <= 3 ? '0-3 días' : ($edadDias <= 14 ? '4-14 días' : '15+ días')
-                ];
-                $totalFueraDeRango++;
-            }
-        }
-
-        // 9. Calcular humedad media global para el periodo
-        $humedadMediaGlobal = $todasLasLecturas->avg('valor');
-        $totalLecturas = $todasLasLecturas->count();
-        $porcentajeFueraDeRango = $totalLecturas > 0 ?
-            round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
-
-        // 10. Preparar respuesta completa
+    if (!$camada) {
         return response()->json([
+            'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
             'dispositivo' => [
                 'id' => $dispId,
                 'numero_serie' => $serie
-            ],
-            'camada' => [
-                'id' => $camada->id_camada,
-                'nombre' => $camada->nombre_camada,
-                'tipo_ave' => $camada->tipo_ave,
-                'fecha_inicio' => $camada->fecha_hora_inicio
-            ],
-            'periodo' => [
-                'fecha_inicio' => $fechaInicio,
-                'fecha_fin' => $fechaFin
-            ],
-            'configuracion' => [
-                'rangos_alerta' => [
-                    [
-                        'rango_edad' => '0-3 días',
-                        'humedad_min' => '55%',
-                        'humedad_max' => '75%'
-                    ],
-                    [
-                        'rango_edad' => '4-14 días',
-                        'humedad_min' => '50%',
-                        'humedad_max' => '70%'
-                    ],
-                    [
-                        'rango_edad' => '15+ días',
-                        'humedad_min' => '45%',
-                        'humedad_max' => '65%'
-                    ]
-                ]
-            ],
-            'resumen' => [
-                'humedad_media_global' => round($humedadMediaGlobal, 2),
-                'total_lecturas' => $totalLecturas,
-                'lecturas_fuera_rango' => $totalFueraDeRango,
-                'porcentaje_fuera_rango' => $porcentajeFueraDeRango
-            ],
-            'datos_grafica' => $datosGrafica,
-            'alertas' => $alertas
+            ]
         ], Response::HTTP_OK);
     }
+
+    // 3. Función para determinar rangos de humedad aceptables según edad
+    $obtenerRangosHumedad = function ($edadDias) {
+        if ($edadDias >= 0 && $edadDias <= 3) {
+            return [
+                'min' => 55,
+                'max' => 75
+            ];
+        } elseif ($edadDias <= 14) {
+            return [
+                'min' => 50,
+                'max' => 70
+            ];
+        } else {
+            return [
+                'min' => 45,
+                'max' => 65
+            ];
+        }
+    };
+
+    // 4. Sensor de humedad
+    $SENSOR_HUMEDAD = 5;
+
+    // 5. Obtener todas las lecturas individuales ordenadas por fecha para procesar alertas activas
+    $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD)
+        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+        ->orderBy('fecha')
+        ->get(['valor', 'fecha']);
+
+    // 6. Obtener datos diarios para la gráfica
+    $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
+        ->where('id_sensor', $SENSOR_HUMEDAD)
+        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+        ->select(
+            DB::raw('DATE(fecha) as dia'),
+            DB::raw('ROUND(AVG(valor),2) as humedad_media'),
+            DB::raw('MIN(valor) as humedad_min'),
+            DB::raw('MAX(valor) as humedad_max'),
+            DB::raw('COUNT(*) as lecturas')
+        )
+        ->groupBy('dia')
+        ->orderBy('dia')
+        ->get();
+
+    // 7. Preparar datos para la gráfica con referencias y rangos aceptables
+    $datosGrafica = [];
+    foreach ($datosDiarios as $dato) {
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)
+            ->diffInDays(Carbon::parse($dato->dia));
+
+        $rangos = $obtenerRangosHumedad($edadDias);
+        $humedadMin = $rangos['min'];
+        $humedadMax = $rangos['max'];
+        $humedadReferencia = ($humedadMin + $humedadMax) / 2;
+
+        $datosGrafica[] = [
+            'fecha' => $dato->dia,
+            'humedad_media' => $dato->humedad_media,
+            'humedad_min' => $dato->humedad_min,
+            'humedad_max' => $dato->humedad_max,
+            'humedad_referencia' => $humedadReferencia,
+            'limite_inferior' => $humedadMin,
+            'limite_superior' => $humedadMax,
+            'edad_dias' => $edadDias,
+            'lecturas' => $dato->lecturas
+        ];
+    }
+
+    // 8. Procesar alertas (todas y activas) - LÓGICA IGUAL A TEMPERATURA
+    $alertas = [];
+    $alertasActivas = [];
+    $alertaActualActiva = null; // Solo UNA alerta activa por dispositivo
+    $totalFueraDeRango = 0;
+
+    foreach ($todasLasLecturas as $lectura) {
+        $fechaLectura = Carbon::parse($lectura->fecha);
+        $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fechaLectura);
+
+        $rangos = $obtenerRangosHumedad($edadDias);
+        $humedadMin = $rangos['min'];
+        $humedadMax = $rangos['max'];
+        $humedadReferencia = ($humedadMin + $humedadMax) / 2;
+
+        $valorLectura = (float) $lectura->valor;
+
+        // Determinar si esta lectura genera una alerta
+        $tipoAlertaActual = null;
+        if ($valorLectura < $humedadMin) {
+            $tipoAlertaActual = 'baja';
+        } elseif ($valorLectura > $humedadMax) {
+            $tipoAlertaActual = 'alta';
+        }
+
+        // Si hay una alerta en esta lectura
+        if ($tipoAlertaActual !== null) {
+            $desviacion = round($valorLectura - $humedadReferencia, 2);
+            $desviacionPorcentaje = round(($desviacion / $humedadReferencia) * 100, 2);
+
+            $alerta = [
+                'fecha' => $fechaLectura->format('Y-m-d'),
+                'hora' => $fechaLectura->format('H:i:s'),
+                'humedad_medida' => $valorLectura,
+                'humedad_referencia' => $humedadReferencia,
+                'limite_inferior' => $humedadMin,
+                'limite_superior' => $humedadMax,
+                'desviacion' => $desviacion,
+                'desviacion_porcentaje' => $desviacionPorcentaje,
+                'tipo' => $tipoAlertaActual,
+                'edad_dias' => $edadDias,
+                'rango_edad' => $edadDias <= 3 ? '0-3 días' : ($edadDias <= 14 ? '4-14 días' : '15+ días')
+            ];
+
+            // Agregar a todas las alertas
+            $alertas[] = $alerta;
+            $totalFueraDeRango++;
+
+            // ✅ GESTIÓN DE ALERTAS ACTIVAS - SOLO UNA A LA VEZ
+            if ($alertaActualActiva === null) {
+                // No hay alerta activa, crear una nueva
+                $alertaActualActiva = [
+                    'inicio' => $alerta,
+                    'fin' => null,
+                    'tipo' => $tipoAlertaActual,
+                    'duracion_minutos' => 0,
+                    'lecturas_alerta' => 1,
+                    'estado' => 'activa'
+                ];
+            } elseif ($alertaActualActiva['tipo'] === $tipoAlertaActual) {
+                // ✅ MISMO TIPO: Solo actualizar duración y contador
+                $inicioAlerta = Carbon::parse($alertaActualActiva['inicio']['fecha'] . ' ' . $alertaActualActiva['inicio']['hora']);
+                $alertaActualActiva['duracion_minutos'] = $inicioAlerta->diffInMinutes($fechaLectura);
+                $alertaActualActiva['lecturas_alerta']++;
+            } else {
+                // ✅ TIPO DIFERENTE: Cerrar la anterior y crear nueva (REEMPLAZAR)
+                $alertaActualActiva['fin'] = [
+                    'fecha' => $fechaLectura->format('Y-m-d'),
+                    'hora' => $fechaLectura->format('H:i:s'),
+                    'motivo' => 'cambio_tipo',
+                    'nuevo_tipo' => $tipoAlertaActual
+                ];
+                $alertaActualActiva['estado'] = 'resuelta';
+
+                // Agregar la alerta cerrada al historial
+                $alertasActivas[] = $alertaActualActiva;
+
+                // ✅ CREAR NUEVA ALERTA (REEMPLAZANDO LA ANTERIOR)
+                $alertaActualActiva = [
+                    'inicio' => $alerta,
+                    'fin' => null,
+                    'tipo' => $tipoAlertaActual,
+                    'duracion_minutos' => 0,
+                    'lecturas_alerta' => 1,
+                    'estado' => 'activa'
+                ];
+            }
+        } else {
+            // ✅ NO HAY ALERTA: Si hay una alerta activa, cerrarla
+            if ($alertaActualActiva !== null) {
+                $alertaActualActiva['fin'] = [
+                    'fecha' => $fechaLectura->format('Y-m-d'),
+                    'hora' => $fechaLectura->format('H:i:s'),
+                    'motivo' => 'normalizada',
+                    'humedad_normalizacion' => $valorLectura
+                ];
+                $alertaActualActiva['estado'] = 'resuelta';
+
+                // Agregar al historial y limpiar
+                $alertasActivas[] = $alertaActualActiva;
+                $alertaActualActiva = null; // ✅ LIMPIAR - No hay alerta activa
+            }
+        }
+    }
+
+    // ✅ IMPORTANTE: Si al final hay una alerta activa, agregarla
+    if ($alertaActualActiva !== null) {
+        $alertaActualActiva['estado'] = 'activa';
+        $alertasActivas[] = $alertaActualActiva;
+    }
+
+    // ✅ PREPARAR RESPUESTA FINAL - SOLO UNA ALERTA ACTIVA
+    $alertasActivasActuales = collect($alertasActivas)->where('estado', 'activa');
+    $alertasResueltasTotal = collect($alertasActivas)->where('estado', 'resuelta');
+
+    // ✅ SOLO PUEDE HABER UNA ALERTA ACTIVA
+    $alertaActivaActual = $alertasActivasActuales->first(); // Solo la primera (debería ser única)
+
+    // 9. Calcular estadísticas
+    $humedadMediaGlobal = $todasLasLecturas->avg('valor');
+    $totalLecturas = $todasLasLecturas->count();
+    $porcentajeFueraDeRango = $totalLecturas > 0 ?
+        round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
+
+    $duracionTotalAlertas = collect($alertasActivas)->sum('duracion_minutos');
+    $promedioLecturasporAlerta = collect($alertasActivas)->avg('lecturas_alerta');
+
+    // 10. Preparar respuesta completa
+    return response()->json([
+        'dispositivo' => [
+            'id' => $dispId,
+            'numero_serie' => $serie
+        ],
+        'camada' => [
+            'id' => $camada->id_camada,
+            'nombre' => $camada->nombre_camada,
+            'tipo_ave' => $camada->tipo_ave,
+            'fecha_inicio' => $camada->fecha_hora_inicio
+        ],
+        'periodo' => [
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin
+        ],
+        'configuracion' => [
+            'rangos_alerta' => [
+                [
+                    'rango_edad' => '0-3 días',
+                    'humedad_min' => '55%',
+                    'humedad_max' => '75%'
+                ],
+                [
+                    'rango_edad' => '4-14 días',
+                    'humedad_min' => '50%',
+                    'humedad_max' => '70%'
+                ],
+                [
+                    'rango_edad' => '15+ días',
+                    'humedad_min' => '45%',
+                    'humedad_max' => '65%'
+                ]
+            ]
+        ],
+        'resumen' => [
+            'humedad_media_global' => round($humedadMediaGlobal, 2),
+            'total_lecturas' => $totalLecturas,
+            'lecturas_fuera_rango' => $totalFueraDeRango,
+            'porcentaje_fuera_rango' => $porcentajeFueraDeRango
+        ],
+        'resumen_alertas_activas' => [
+            'total_alertas_procesadas' => count($alertasActivas),
+            'alertas_activas_actuales' => $alertasActivasActuales->count(), // Debería ser 0 o 1
+            'alertas_resueltas' => $alertasResueltasTotal->count(),
+            'duracion_total_alertas_minutos' => collect($alertasActivas)->sum('duracion_minutos'),
+            'promedio_lecturas_por_alerta' => collect($alertasActivas)->avg('lecturas_alerta'),
+            'hay_alerta_activa' => $alertaActivaActual !== null,
+            'tipo_alerta_activa' => $alertaActivaActual ? $alertaActivaActual['tipo'] : null
+        ],
+        'alertas_activas_actuales' => [
+            // ✅ SOLO UNA ESTRUCTURA - La que esté activa
+            'humedad_baja' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'baja') ? $alertaActivaActual : null,
+            'humedad_alta' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'alta') ? $alertaActivaActual : null,
+        ],
+        'datos_grafica' => $datosGrafica,
+        'alertas' => $alertas,
+        'historial_alertas_activas' => $alertasActivas
+    ], Response::HTTP_OK);
+}
 
     /**
      * Obtiene todas las lecturas individuales de temperatura o humedad en un rango de fechas
