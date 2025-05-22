@@ -2120,22 +2120,30 @@ class CamadaController extends Controller
                 'thi' => []
             ];
 
-            foreach ($lecturasPorTimestamp as $timestamp => $lectura) {
-                $fechaLectura = Carbon::parse($timestamp)->format('Y-m-d');
+            for ($hora = 0; $hora < 24; $hora++) {
+                $tempsHora = [];
+                $humsHora = [];
 
-                // Solo procesar lecturas de este día
-                if ($fechaLectura === $fecha) {
-                    $temp = $lectura['temperatura'];
-                    $hum = $lectura['humedad'];
-
-                    // Solo calcular si tenemos ambos valores
-                    if ($temp !== null && $hum !== null) {
-                        $iecLectura = round($temp + $hum, 1);
-                        $thiLectura = round((0.8 * $temp) + (($hum / 100) * ($temp - 14.4)) + 46.4, 1);
-
-                        $indicesDelDia['iec'][] = $iecLectura;
-                        $indicesDelDia['thi'][] = $thiLectura;
+                foreach ($lecturasPorTimestamp as $ts => $lectura) {
+                    if (Carbon::parse($ts)->hour === $hora && Carbon::parse($ts)->format('Y-m-d') === $fecha) {
+                        if ($lectura['temperatura'] !== null) {
+                            $tempsHora[] = $lectura['temperatura'];
+                        }
+                        if ($lectura['humedad'] !== null) {
+                            $humsHora[] = $lectura['humedad'];
+                        }
                     }
+                }
+
+                if (count($tempsHora) > 0 && count($humsHora) > 0) {
+                    $tempHora = array_sum($tempsHora) / count($tempsHora);
+                    $humHora = array_sum($humsHora) / count($humsHora);
+
+                    $iecHora = round($tempHora + $humHora, 1);
+                    $thiHora = round((0.8 * $tempHora) + (($humHora / 100) * ($tempHora - 14.4)) + 46.4, 1);
+
+                    $indicesDelDia['iec'][] = $iecHora;
+                    $indicesDelDia['thi'][] = $thiHora;
                 }
             }
 
