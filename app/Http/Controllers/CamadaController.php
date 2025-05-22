@@ -890,9 +890,10 @@ class CamadaController extends Controller
         }
 
         // 9. Procesar alertas (todas y activas)
+        // 9. Procesar alertas (todas y activas) - LÓGICA CORREGIDA
         $alertas = [];
         $alertasActivas = [];
-        $alertaActualActiva = null; // Para rastrear la alerta activa actual
+        $alertaActualActiva = null; // Solo UNA alerta activa por dispositivo
         $totalFueraDeRango = 0;
 
         foreach ($todasLasLecturas as $lectura) {
@@ -906,11 +907,8 @@ class CamadaController extends Controller
             }
 
             $margenes = $obtenerMargenes($edadDias);
-            $margenInferior = $margenes['inferior'];
-            $margenSuperior = $margenes['superior'];
-
-            $limiteInferior = round($tempReferencia * (1 - $margenInferior / 100), 2);
-            $limiteSuperior = round($tempReferencia * (1 + $margenSuperior / 100), 2);
+            $limiteInferior = round($tempReferencia * (1 - $margenes['inferior'] / 100), 2);
+            $limiteSuperior = round($tempReferencia * (1 + $margenes['superior'] / 100), 2);
 
             $valorLectura = (float) $lectura->valor;
 
@@ -939,8 +937,8 @@ class CamadaController extends Controller
                     'tipo' => $tipoAlertaActual,
                     'edad_dias' => $edadDias,
                     'margen_edad' => [
-                        'inferior' => "{$margenInferior}%",
-                        'superior' => "{$margenSuperior}%"
+                        'inferior' => "{$margenes['inferior']}%",
+                        'superior' => "{$margenes['superior']}%"
                     ]
                 ];
 
@@ -948,7 +946,7 @@ class CamadaController extends Controller
                 $alertas[] = $alerta;
                 $totalFueraDeRango++;
 
-                // Gestión de alertas activas
+                // ✅ GESTIÓN DE ALERTAS ACTIVAS - SOLO UNA A LA VEZ
                 if ($alertaActualActiva === null) {
                     // No hay alerta activa, crear una nueva
                     $alertaActualActiva = [
@@ -960,12 +958,12 @@ class CamadaController extends Controller
                         'estado' => 'activa'
                     ];
                 } elseif ($alertaActualActiva['tipo'] === $tipoAlertaActual) {
-                    // La alerta activa es del mismo tipo, actualizar duración y contador
+                    // ✅ MISMO TIPO: Solo actualizar duración y contador
                     $inicioAlerta = Carbon::parse($alertaActualActiva['inicio']['fecha'] . ' ' . $alertaActualActiva['inicio']['hora']);
                     $alertaActualActiva['duracion_minutos'] = $inicioAlerta->diffInMinutes($fechaLectura);
                     $alertaActualActiva['lecturas_alerta']++;
                 } else {
-                    // La alerta activa es de diferente tipo, cerrar la anterior y crear nueva
+                    // ✅ TIPO DIFERENTE: Cerrar la anterior y crear nueva (REEMPLAZAR)
                     $alertaActualActiva['fin'] = [
                         'fecha' => $fechaLectura->format('Y-m-d'),
                         'hora' => $fechaLectura->format('H:i:s'),
@@ -974,10 +972,10 @@ class CamadaController extends Controller
                     ];
                     $alertaActualActiva['estado'] = 'resuelta';
 
-                    // Agregar la alerta cerrada a las alertas activas históricas
+                    // Agregar la alerta cerrada al historial
                     $alertasActivas[] = $alertaActualActiva;
 
-                    // Crear nueva alerta activa
+                    // ✅ CREAR NUEVA ALERTA (REEMPLAZANDO LA ANTERIOR)
                     $alertaActualActiva = [
                         'inicio' => $alerta,
                         'fin' => null,
@@ -988,7 +986,7 @@ class CamadaController extends Controller
                     ];
                 }
             } else {
-                // No hay alerta en esta lectura, si hay una alerta activa, cerrarla
+                // ✅ NO HAY ALERTA: Si hay una alerta activa, cerrarla
                 if ($alertaActualActiva !== null) {
                     $alertaActualActiva['fin'] = [
                         'fecha' => $fechaLectura->format('Y-m-d'),
@@ -998,20 +996,26 @@ class CamadaController extends Controller
                     ];
                     $alertaActualActiva['estado'] = 'resuelta';
 
-                    // Agregar la alerta cerrada a las alertas activas históricas
+                    // Agregar al historial y limpiar
                     $alertasActivas[] = $alertaActualActiva;
-
-                    // Limpiar la alerta activa actual
-                    $alertaActualActiva = null;
+                    $alertaActualActiva = null; // ✅ LIMPIAR - No hay alerta activa
                 }
             }
         }
 
-        // Si al final del procesamiento hay una alerta activa, agregarla (sigue activa)
+        // ✅ IMPORTANTE: Si al final hay una alerta activa, agregarla
         if ($alertaActualActiva !== null) {
             $alertaActualActiva['estado'] = 'activa';
             $alertasActivas[] = $alertaActualActiva;
         }
+
+        // ✅ PREPARAR RESPUESTA FINAL - SOLO UNA ALERTA ACTIVA
+        $alertasActivasActuales = collect($alertasActivas)->where('estado', 'activa');
+        $alertasResueltasTotal = collect($alertasActivas)->where('estado', 'resuelta');
+
+        // ✅ SOLO PUEDE HABER UNA ALERTA ACTIVA
+        $alertaActivaActual = $alertasActivasActuales->first(); // Solo la primera (debería ser única)
+
 
         // 10. Calcular estadísticas
         $temperaturaMediaGlobal = $todasLasLecturas->avg('valor');
@@ -1019,9 +1023,6 @@ class CamadaController extends Controller
         $porcentajeFueraDeRango = $totalLecturas > 0 ?
             round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
 
-        // Estadísticas de alertas activas
-        $alertasActivasActuales = collect($alertasActivas)->where('estado', 'activa');
-        $alertasResueltasTotal = collect($alertasActivas)->where('estado', 'resuelta');
 
         $duracionTotalAlertas = collect($alertasActivas)->sum('duracion_minutos');
         $promedioLecturasporAlerta = collect($alertasActivas)->avg('lecturas_alerta');
@@ -1074,20 +1075,21 @@ class CamadaController extends Controller
             ],
             'resumen_alertas_activas' => [
                 'total_alertas_procesadas' => count($alertasActivas),
-                'alertas_activas_actuales' => $alertasActivasActuales->count(),
+                'alertas_activas_actuales' => $alertasActivasActuales->count(), // Debería ser 0 o 1
                 'alertas_resueltas' => $alertasResueltasTotal->count(),
-                'duracion_total_alertas_minutos' => $duracionTotalAlertas,
-                'promedio_lecturas_por_alerta' => round($promedioLecturasporAlerta, 1),
-                'hay_alerta_temperatura_baja' => $alertaActivaBaja !== null,
-                'hay_alerta_temperatura_alta' => $alertaActivaAlta !== null
+                'duracion_total_alertas_minutos' => collect($alertasActivas)->sum('duracion_minutos'),
+                'promedio_lecturas_por_alerta' => collect($alertasActivas)->avg('lecturas_alerta'),
+                'hay_alerta_activa' => $alertaActivaActual !== null,
+                'tipo_alerta_activa' => $alertaActivaActual ? $alertaActivaActual['tipo'] : null
             ],
             'alertas_activas_actuales' => [
-                'temperatura_baja' => $alertaActivaBaja,
-                'temperatura_alta' => $alertaActivaAlta
+                // ✅ SOLO UNA ESTRUCTURA - La que esté activa
+                'temperatura_baja' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'baja') ? $alertaActivaActual : null,
+                'temperatura_alta' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'alta') ? $alertaActivaActual : null,
             ],
             'datos_grafica' => $datosGrafica,
-            'alertas' => $alertas, // Todas las alertas individuales
-            'historial_alertas_activas' => $alertasActivas // Historial completo de alertas activas
+            'alertas' => $alertas,
+            'historial_alertas_activas' => $alertasActivas
         ], Response::HTTP_OK);
     }
     /**
