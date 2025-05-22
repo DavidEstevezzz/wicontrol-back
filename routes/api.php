@@ -65,7 +65,8 @@ Route::get('/dispositivos/{dispId}/datos-ambientales-diarios', [CamadaController
 Route::get('/dispositivos/{dispId}/medidas/{tipoSensor}', [CamadaController::class, 'getMedidasIndividuales']);
 Route::get('dispositivos/{dispId}/actividad', [CamadaController::class, 'monitorearActividad']);
 Route::get('dispositivos/{dispId}/luz', [CamadaController::class, 'monitorearLuz']);
-
+Route::get('/dispositivos/{dispId}/indices-ambientales-rango', [CamadaController::class, 'getIndicesAmbientalesRango'])
+    ->name('dispositivos.indices-ambientales-rango');
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);

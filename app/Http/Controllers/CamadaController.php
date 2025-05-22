@@ -1901,6 +1901,447 @@ class CamadaController extends Controller
         ], Response::HTTP_OK);
     }
 
+
+    /**
+     * Obtiene datos de IEC y THI para un dispositivo en un rango de fechas
+     * 
+     * @param Request $request
+     * @param int $dispId ID del dispositivo
+     * @return JsonResponse
+     */
+    public function getIndicesAmbientalesRango(Request $request, int $dispId): JsonResponse
+    {
+        // 1. Validar parámetros
+        $request->validate([
+            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+            'fecha_fin'    => 'required|date',
+        ]);
+
+        $fechaInicio = $request->query('fecha_inicio');
+        $fechaFin = $request->query('fecha_fin');
+
+        // 2. Cargar dispositivo y camada asociada
+        $dispositivo = Dispositivo::findOrFail($dispId);
+        $serie = $dispositivo->numero_serie;
+
+        $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+            ->where(function ($query) use ($fechaInicio, $fechaFin) {
+                $query->where(function ($q) use ($fechaInicio, $fechaFin) {
+                    $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                        ->where(function ($q2) use ($fechaInicio) {
+                            $q2->whereNull('tb_camada.fecha_hora_final')
+                                ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                        });
+                });
+            })
+            ->select('tb_camada.*')
+            ->first();
+
+        if (!$camada) {
+            return response()->json([
+                'mensaje' => 'No se encontró una camada activa para este dispositivo en el rango de fechas especificado',
+                'dispositivo' => [
+                    'id' => $dispId,
+                    'numero_serie' => $serie
+                ]
+            ], Response::HTTP_OK);
+        }
+
+        // 3. Definición de sensores
+        $SENSOR_TEMPERATURA = 6;
+        $SENSOR_HUMEDAD = 5;
+
+        // 4. Obtener TODAS las lecturas individuales para calcular IEC y THI por lectura
+        $lecturasIndividuales = DB::table('tb_entrada_dato')
+            ->where('id_dispositivo', $serie)
+            ->whereIn('id_sensor', [$SENSOR_TEMPERATURA, $SENSOR_HUMEDAD])
+            ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+            ->select('fecha', 'id_sensor', 'valor')
+            ->orderBy('fecha')
+            ->get();
+
+        // 5. También obtener datos diarios agregados para eficiencia
+        $datosDiarios = DB::table('tb_entrada_dato')
+            ->where('id_dispositivo', $serie)
+            ->whereIn('id_sensor', [$SENSOR_TEMPERATURA, $SENSOR_HUMEDAD])
+            ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+            ->select(
+                DB::raw('DATE(fecha) as dia'),
+                'id_sensor',
+                DB::raw('ROUND(AVG(valor), 2) as valor_medio'),
+                DB::raw('MIN(valor) as valor_min'),
+                DB::raw('MAX(valor) as valor_max'),
+                DB::raw('COUNT(*) as lecturas')
+            )
+            ->groupBy('dia', 'id_sensor')
+            ->orderBy('dia')
+            ->get();
+
+        // 6. Organizar lecturas individuales por timestamp para calcular índices por lectura
+        $lecturasPorTimestamp = [];
+        foreach ($lecturasIndividuales as $lectura) {
+            $timestamp = $lectura->fecha;
+            if (!isset($lecturasPorTimestamp[$timestamp])) {
+                $lecturasPorTimestamp[$timestamp] = [
+                    'fecha' => $timestamp,
+                    'temperatura' => null,
+                    'humedad' => null
+                ];
+            }
+
+            if ($lectura->id_sensor == $SENSOR_TEMPERATURA) {
+                $lecturasPorTimestamp[$timestamp]['temperatura'] = (float)$lectura->valor;
+            } elseif ($lectura->id_sensor == $SENSOR_HUMEDAD) {
+                $lecturasPorTimestamp[$timestamp]['humedad'] = (float)$lectura->valor;
+            }
+        }
+
+        // 7. Organizar datos diarios agregados
+        $datosOrganizados = [];
+        foreach ($datosDiarios as $dato) {
+            $dia = $dato->dia;
+            if (!isset($datosOrganizados[$dia])) {
+                $datosOrganizados[$dia] = [
+                    'fecha' => $dia,
+                    'temperatura' => null,
+                    'humedad' => null,
+                    'temperatura_min' => null,
+                    'temperatura_max' => null,
+                    'humedad_min' => null,
+                    'humedad_max' => null,
+                    'lecturas_temp' => 0,
+                    'lecturas_hum' => 0
+                ];
+            }
+
+            if ($dato->id_sensor == $SENSOR_TEMPERATURA) {
+                $datosOrganizados[$dia]['temperatura'] = $dato->valor_medio;
+                $datosOrganizados[$dia]['temperatura_min'] = $dato->valor_min;
+                $datosOrganizados[$dia]['temperatura_max'] = $dato->valor_max;
+                $datosOrganizados[$dia]['lecturas_temp'] = $dato->lecturas;
+            } elseif ($dato->id_sensor == $SENSOR_HUMEDAD) {
+                $datosOrganizados[$dia]['humedad'] = $dato->valor_medio;
+                $datosOrganizados[$dia]['humedad_min'] = $dato->valor_min;
+                $datosOrganizados[$dia]['humedad_max'] = $dato->valor_max;
+                $datosOrganizados[$dia]['lecturas_hum'] = $dato->lecturas;
+            }
+        }
+
+        // 8. Funciones auxiliares para niveles de índices con rangos específicos
+        $obtenerNivelIEC = function ($iec) {
+            if ($iec === null) return null;
+
+            if ($iec <= 105) {
+                return [
+                    'nivel' => 'normal',
+                    'color' => 'green',
+                    'mensaje' => 'Condiciones normales',
+                    'rango' => '≤ 105'
+                ];
+            } elseif ($iec <= 120) {
+                return [
+                    'nivel' => 'moderado',
+                    'color' => 'yellow',
+                    'mensaje' => 'Alerta: Estrés calórico moderado',
+                    'rango' => '106 - 120'
+                ];
+            } elseif ($iec <= 130) {
+                return [
+                    'nivel' => 'alto',
+                    'color' => 'orange',
+                    'mensaje' => 'Peligro: Estrés calórico alto',
+                    'rango' => '121 - 130'
+                ];
+            } else {
+                return [
+                    'nivel' => 'critico',
+                    'color' => 'red',
+                    'mensaje' => 'Emergencia: Estrés calórico extremo',
+                    'rango' => '> 130'
+                ];
+            }
+        };
+
+        $obtenerNivelTHI = function ($thi) {
+            if ($thi === null) return null;
+
+            if ($thi <= 72) {
+                return [
+                    'nivel' => 'normal',
+                    'color' => 'green',
+                    'mensaje' => 'THI normal: Condiciones óptimas',
+                    'rango' => '≤ 72'
+                ];
+            } elseif ($thi <= 79) {
+                return [
+                    'nivel' => 'moderado',
+                    'color' => 'yellow',
+                    'mensaje' => 'THI elevado: Alerta',
+                    'rango' => '73 - 79'
+                ];
+            } elseif ($thi <= 88) {
+                return [
+                    'nivel' => 'alto',
+                    'color' => 'orange',
+                    'mensaje' => 'THI alto: Peligro',
+                    'rango' => '80 - 88'
+                ];
+            } else {
+                return [
+                    'nivel' => 'critico',
+                    'color' => 'red',
+                    'mensaje' => 'THI crítico: Emergencia',
+                    'rango' => '> 88'
+                ];
+            }
+        };
+
+        // 9. Calcular índices por día con min/max/media diarios
+        $datosGrafica = [];
+        $alertasIEC = [];
+        $alertasTHI = [];
+        $resumenNiveles = [
+            'iec' => ['normal' => 0, 'moderado' => 0, 'alto' => 0, 'critico' => 0],
+            'thi' => ['normal' => 0, 'moderado' => 0, 'alto' => 0, 'critico' => 0]
+        ];
+
+        foreach ($datosOrganizados as $datos) {
+            $fecha = $datos['fecha'];
+            $temperatura = $datos['temperatura'];
+            $humedad = $datos['humedad'];
+
+            // Calcular edad de la camada para esta fecha
+            $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fecha);
+
+            // Calcular IEC y THI para todas las lecturas individuales de este día
+            $indicesDelDia = [
+                'iec' => [],
+                'thi' => []
+            ];
+
+            foreach ($lecturasPorTimestamp as $timestamp => $lectura) {
+                $fechaLectura = Carbon::parse($timestamp)->format('Y-m-d');
+
+                // Solo procesar lecturas de este día
+                if ($fechaLectura === $fecha) {
+                    $temp = $lectura['temperatura'];
+                    $hum = $lectura['humedad'];
+
+                    // Solo calcular si tenemos ambos valores
+                    if ($temp !== null && $hum !== null) {
+                        $iecLectura = round($temp + $hum, 1);
+                        $thiLectura = round((0.8 * $temp) + (($hum / 100) * ($temp - 14.4)) + 46.4, 1);
+
+                        $indicesDelDia['iec'][] = $iecLectura;
+                        $indicesDelDia['thi'][] = $thiLectura;
+                    }
+                }
+            }
+
+            // Calcular estadísticas diarias de los índices
+            $iecStats = null;
+            $thiStats = null;
+            $nivelIECDia = null;
+            $nivelTHIDia = null;
+
+            if (count($indicesDelDia['iec']) > 0) {
+                $iecStats = [
+                    'media' => round(array_sum($indicesDelDia['iec']) / count($indicesDelDia['iec']), 1),
+                    'minimo' => round(min($indicesDelDia['iec']), 1),
+                    'maximo' => round(max($indicesDelDia['iec']), 1),
+                    'total_lecturas' => count($indicesDelDia['iec'])
+                ];
+                $nivelIECDia = $obtenerNivelIEC($iecStats['media']);
+                $resumenNiveles['iec'][$nivelIECDia['nivel']]++;
+
+                // Agregar alerta si no es normal
+                if ($nivelIECDia['nivel'] !== 'normal') {
+                    $alertasIEC[] = [
+                        'fecha' => $fecha,
+                        'edad_dias' => $edadDias,
+                        'iec_media' => $iecStats['media'],
+                        'iec_minimo' => $iecStats['minimo'],
+                        'iec_maximo' => $iecStats['maximo'],
+                        'temperatura' => $temperatura,
+                        'humedad' => $humedad,
+                        'nivel' => $nivelIECDia,
+                        'tipo' => 'iec'
+                    ];
+                }
+            }
+
+            if (count($indicesDelDia['thi']) > 0) {
+                $thiStats = [
+                    'media' => round(array_sum($indicesDelDia['thi']) / count($indicesDelDia['thi']), 1),
+                    'minimo' => round(min($indicesDelDia['thi']), 1),
+                    'maximo' => round(max($indicesDelDia['thi']), 1),
+                    'total_lecturas' => count($indicesDelDia['thi'])
+                ];
+                $nivelTHIDia = $obtenerNivelTHI($thiStats['media']);
+                $resumenNiveles['thi'][$nivelTHIDia['nivel']]++;
+
+                // Agregar alerta si no es normal
+                if ($nivelTHIDia['nivel'] !== 'normal') {
+                    $alertasTHI[] = [
+                        'fecha' => $fecha,
+                        'edad_dias' => $edadDias,
+                        'thi_media' => $thiStats['media'],
+                        'thi_minimo' => $thiStats['minimo'],
+                        'thi_maximo' => $thiStats['maximo'],
+                        'temperatura' => $temperatura,
+                        'humedad' => $humedad,
+                        'nivel' => $nivelTHIDia,
+                        'tipo' => 'thi'
+                    ];
+                }
+            }
+
+            // Función auxiliar para determinar nivel de riesgo máximo
+            $determinarNivelRiesgoMaximo = function ($nivelIEC, $nivelTHI) {
+                $niveles = ['normal' => 0, 'moderado' => 1, 'alto' => 2, 'critico' => 3];
+
+                $maxNivel = 0;
+                if ($nivelIEC && isset($niveles[$nivelIEC['nivel']])) {
+                    $maxNivel = max($maxNivel, $niveles[$nivelIEC['nivel']]);
+                }
+                if ($nivelTHI && isset($niveles[$nivelTHI['nivel']])) {
+                    $maxNivel = max($maxNivel, $niveles[$nivelTHI['nivel']]);
+                }
+
+                return array_search($maxNivel, $niveles);
+            };
+
+            $datosGrafica[] = [
+                'fecha' => $fecha,
+                'edad_dias' => $edadDias,
+                'temperatura_media' => $temperatura,
+                'temperatura_min' => $datos['temperatura_min'],
+                'temperatura_max' => $datos['temperatura_max'],
+                'humedad_media' => $humedad,
+                'humedad_min' => $datos['humedad_min'],
+                'humedad_max' => $datos['humedad_max'],
+                // ✅ IEC con media, min, max diarios
+                'iec_media' => $iecStats ? $iecStats['media'] : null,
+                'iec_minimo' => $iecStats ? $iecStats['minimo'] : null,
+                'iec_maximo' => $iecStats ? $iecStats['maximo'] : null,
+                'iec_nivel' => $nivelIECDia,
+                'iec_lecturas' => $iecStats ? $iecStats['total_lecturas'] : 0,
+                // ✅ THI con media, min, max diarios
+                'thi_media' => $thiStats ? $thiStats['media'] : null,
+                'thi_minimo' => $thiStats ? $thiStats['minimo'] : null,
+                'thi_maximo' => $thiStats ? $thiStats['maximo'] : null,
+                'thi_nivel' => $nivelTHIDia,
+                'thi_lecturas' => $thiStats ? $thiStats['total_lecturas'] : 0,
+                'lecturas_temperatura' => $datos['lecturas_temp'],
+                'lecturas_humedad' => $datos['lecturas_hum'],
+                // ✅ ESTADÍSTICAS DIARIAS DETALLADAS
+                'estadisticas_dia' => [
+                    'calidad_datos' => [
+                        'total_lecturas_posibles' => 1440, // 24h * 60min (asumiendo lectura por minuto)
+                        'lecturas_temperatura' => $datos['lecturas_temp'],
+                        'lecturas_humedad' => $datos['lecturas_hum'],
+                        'cobertura_temperatura' => $datos['lecturas_temp'] > 0 ? round(($datos['lecturas_temp'] / 1440) * 100, 1) : 0,
+                        'cobertura_humedad' => $datos['lecturas_hum'] > 0 ? round(($datos['lecturas_hum'] / 1440) * 100, 1) : 0
+                    ],
+                    'variabilidad' => [
+                        'rango_temperatura' => $datos['temperatura_max'] && $datos['temperatura_min'] ?
+                            round($datos['temperatura_max'] - $datos['temperatura_min'], 1) : null,
+                        'rango_humedad' => $datos['humedad_max'] && $datos['humedad_min'] ?
+                            round($datos['humedad_max'] - $datos['humedad_min'], 1) : null,
+                        'rango_iec' => $iecStats ? round($iecStats['maximo'] - $iecStats['minimo'], 1) : null,
+                        'rango_thi' => $thiStats ? round($thiStats['maximo'] - $thiStats['minimo'], 1) : null
+                    ],
+                    'indices_calculados' => [
+                        'iec_calculado' => $iecStats !== null,
+                        'thi_calculado' => $thiStats !== null,
+                        'ambos_disponibles' => $iecStats !== null && $thiStats !== null
+                    ],
+                    'alertas_dia' => [
+                        'iec_problema' => $nivelIECDia && $nivelIECDia['nivel'] !== 'normal',
+                        'thi_problema' => $nivelTHIDia && $nivelTHIDia['nivel'] !== 'normal',
+                        'nivel_riesgo_maximo' => $determinarNivelRiesgoMaximo($nivelIECDia, $nivelTHIDia)
+                    ]
+                ]
+            ];
+        }
+
+        // 10. Calcular estadísticas globales del periodo
+        $todasLasLecturasIEC = [];
+        $todasLasLecturasTHI = [];
+
+        foreach ($datosGrafica as $dia) {
+            if ($dia['iec_media'] !== null) {
+                $todasLasLecturasIEC[] = $dia['iec_media'];
+            }
+            if ($dia['thi_media'] !== null) {
+                $todasLasLecturasTHI[] = $dia['thi_media'];
+            }
+        }
+
+        $estadisticas = [
+            'iec' => [
+                'promedio' => count($todasLasLecturasIEC) > 0 ? round(array_sum($todasLasLecturasIEC) / count($todasLasLecturasIEC), 1) : null,
+                'minimo' => count($todasLasLecturasIEC) > 0 ? round(min($todasLasLecturasIEC), 1) : null,
+                'maximo' => count($todasLasLecturasIEC) > 0 ? round(max($todasLasLecturasIEC), 1) : null,
+                'dias_con_datos' => count($todasLasLecturasIEC)
+            ],
+            'thi' => [
+                'promedio' => count($todasLasLecturasTHI) > 0 ? round(array_sum($todasLasLecturasTHI) / count($todasLasLecturasTHI), 1) : null,
+                'minimo' => count($todasLasLecturasTHI) > 0 ? round(min($todasLasLecturasTHI), 1) : null,
+                'maximo' => count($todasLasLecturasTHI) > 0 ? round(max($todasLasLecturasTHI), 1) : null,
+                'dias_con_datos' => count($todasLasLecturasTHI)
+            ]
+        ];
+
+        // 11. Preparar respuesta completa
+        return response()->json([
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ],
+            'camada' => [
+                'id' => $camada->id_camada,
+                'nombre' => $camada->nombre_camada,
+                'tipo_ave' => $camada->tipo_ave,
+                'fecha_inicio' => $camada->fecha_hora_inicio
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin
+            ],
+            'estadisticas' => $estadisticas,
+            'resumen_niveles' => $resumenNiveles,
+            'datos_grafica' => $datosGrafica,
+            'alertas_iec' => $alertasIEC,
+            'alertas_thi' => $alertasTHI,
+            'total_alertas' => count($alertasIEC) + count($alertasTHI),
+            'informacion_indices' => [
+                'iec' => [
+                    'nombre' => 'Índice de Estrés Calórico',
+                    'formula' => 'Temperatura (°C) + Humedad (%)',
+                    'rangos' => [
+                        ['min' => null, 'max' => 105, 'nivel' => 'normal', 'color' => 'green', 'descripcion' => 'Condiciones normales'],
+                        ['min' => 106, 'max' => 120, 'nivel' => 'moderado', 'color' => 'yellow', 'descripcion' => 'Estrés calórico moderado'],
+                        ['min' => 121, 'max' => 130, 'nivel' => 'alto', 'color' => 'orange', 'descripcion' => 'Estrés calórico alto'],
+                        ['min' => 131, 'max' => null, 'nivel' => 'critico', 'color' => 'red', 'descripcion' => 'Estrés calórico extremo']
+                    ]
+                ],
+                'thi' => [
+                    'nombre' => 'Índice Temperatura-Humedad',
+                    'formula' => '(0.8 × T°C) + ((HR% / 100) × (T°C - 14.4)) + 46.4',
+                    'rangos' => [
+                        ['min' => null, 'max' => 72, 'nivel' => 'normal', 'color' => 'green', 'descripcion' => 'Condiciones óptimas'],
+                        ['min' => 73, 'max' => 79, 'nivel' => 'moderado', 'color' => 'yellow', 'descripcion' => 'THI elevado'],
+                        ['min' => 80, 'max' => 88, 'nivel' => 'alto', 'color' => 'orange', 'descripcion' => 'THI alto'],
+                        ['min' => 89, 'max' => null, 'nivel' => 'critico', 'color' => 'red', 'descripcion' => 'THI crítico']
+                    ]
+                ]
+            ]
+        ], Response::HTTP_OK);
+    }
+
+
     /**
      * Monitorea la actividad de aves para un dispositivo en un rango de fechas
      * 
