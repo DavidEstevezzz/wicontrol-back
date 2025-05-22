@@ -730,6 +730,14 @@ public function getDispositivosByGranja(string $codigoGranja): JsonResponse
  * @param int $dispId ID del dispositivo
  * @return JsonResponse
  */
+/**
+ * Obtiene datos de temperatura para gráfica y tabla de alertas con márgenes variables
+ * Incluye manejo de alertas activas
+ * 
+ * @param Request $request
+ * @param int $dispId ID del dispositivo
+ * @return JsonResponse
+ */
 public function getTemperaturaGraficaAlertas(Request $request, int $dispId): JsonResponse
 {
     // 1. Validar parámetros
@@ -773,14 +781,12 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     // 3. Función para determinar márgenes según edad
     $obtenerMargenes = function($edadDias) use ($usarMargenesPersonalizados) {
         if (!$usarMargenesPersonalizados) {
-            // Usar margen fijo si no se quieren los personalizados
             return [
                 'inferior' => 1.5,
                 'superior' => 1.5
             ];
         }
         
-        // Definir márgenes variables según la edad (en porcentajes)
         if ($edadDias >= 0 && $edadDias <= 14) {
             return [
                 'inferior' => 5,  // -5%
@@ -802,23 +808,19 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     // 4. Cargar TODAS las referencias de temperatura de una sola vez
     $referenciasTemperatura = TemperaturaBroilers::orderBy('edad')->get();
     $cacheReferencias = [];
-    $cacheMargenes = [];
     
     // Función auxiliar para encontrar la referencia para una edad
     $obtenerReferenciaTemperatura = function($edadDias) use ($referenciasTemperatura, &$cacheReferencias) {
-        // Si ya tenemos esta edad en caché, devolver valor almacenado
         if (isset($cacheReferencias[$edadDias])) {
             return $cacheReferencias[$edadDias];
         }
         
-        // Intentar encontrar coincidencia exacta
         $referenciaExacta = $referenciasTemperatura->firstWhere('edad', $edadDias);
         if ($referenciaExacta) {
             $cacheReferencias[$edadDias] = $referenciaExacta->temperatura;
             return $referenciaExacta->temperatura;
         }
         
-        // Buscar la referencia más cercana
         $refCercana = null;
         $menorDiferencia = PHP_INT_MAX;
         
@@ -830,7 +832,6 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
             }
         }
         
-        // Guardar en caché y devolver
         $temperatura = $refCercana ? $refCercana->temperatura : null;
         $cacheReferencias[$edadDias] = $temperatura;
         return $temperatura;
@@ -839,7 +840,7 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     // 5. Sensor de temperatura
     $SENSOR_TEMPERATURA = 6;
     
-    // 6. Obtener todas las lecturas individuales para la tabla de alertas
+    // 6. Obtener todas las lecturas individuales ordenadas por fecha para procesar alertas activas
     $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
         ->where('id_sensor', $SENSOR_TEMPERATURA)
         ->whereBetween('fecha', [$fechaInicio, $fechaFin])
@@ -864,19 +865,14 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     // 8. Preparar datos para la gráfica con referencias y rangos aceptables
     $datosGrafica = [];
     foreach ($datosDiarios as $dato) {
-        // Calcular edad de la camada para ese día
         $edadDias = Carbon::parse($camada->fecha_hora_inicio)
             ->diffInDays(Carbon::parse($dato->dia));
         
-        // Obtener temperatura de referencia
         $tempReferencia = $obtenerReferenciaTemperatura($edadDias);
-        
-        // Obtener márgenes para esta edad
         $margenes = $obtenerMargenes($edadDias);
         $margenInferior = $margenes['inferior'];
         $margenSuperior = $margenes['superior'];
         
-        // Calcular rangos aceptables de temperatura
         $limiteInferior = $tempReferencia ? round($tempReferencia * (1 - $margenInferior/100), 2) : null;
         $limiteSuperior = $tempReferencia ? round($tempReferencia * (1 + $margenSuperior/100), 2) : null;
         
@@ -893,40 +889,45 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
         ];
     }
     
-    // 9. Preparar datos para la tabla de alertas (lecturas fuera de rango)
+    // 9. Procesar alertas (todas y activas)
     $alertas = [];
+    $alertasActivas = [];
+    $alertaActualActiva = null; // Para rastrear la alerta activa actual
     $totalFueraDeRango = 0;
     
     foreach ($todasLasLecturas as $lectura) {
         $fechaLectura = Carbon::parse($lectura->fecha);
         $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fechaLectura);
         
-        // Obtener temperatura de referencia
         $tempReferencia = $obtenerReferenciaTemperatura($edadDias);
         
-        // Si no hay referencia, no podemos comparar
         if ($tempReferencia === null) {
             continue;
         }
         
-        // Obtener márgenes para esta edad
         $margenes = $obtenerMargenes($edadDias);
         $margenInferior = $margenes['inferior'];
         $margenSuperior = $margenes['superior'];
         
-        // Calcular rangos aceptables
         $limiteInferior = round($tempReferencia * (1 - $margenInferior/100), 2);
         $limiteSuperior = round($tempReferencia * (1 + $margenSuperior/100), 2);
         
         $valorLectura = (float) $lectura->valor;
         
-        // Verificar si está fuera del rango aceptable
-        if ($valorLectura < $limiteInferior || $valorLectura > $limiteSuperior) {
-            $tipo = $valorLectura < $limiteInferior ? 'baja' : 'alta';
+        // Determinar si esta lectura genera una alerta
+        $tipoAlertaActual = null;
+        if ($valorLectura < $limiteInferior) {
+            $tipoAlertaActual = 'baja';
+        } elseif ($valorLectura > $limiteSuperior) {
+            $tipoAlertaActual = 'alta';
+        }
+        
+        // Si hay una alerta en esta lectura
+        if ($tipoAlertaActual !== null) {
             $desviacion = round($valorLectura - $tempReferencia, 2);
             $desviacionPorcentaje = round(($desviacion / $tempReferencia) * 100, 2);
             
-            $alertas[] = [
+            $alerta = [
                 'fecha' => $fechaLectura->format('Y-m-d'),
                 'hora' => $fechaLectura->format('H:i:s'),
                 'temperatura_medida' => $valorLectura,
@@ -935,22 +936,99 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
                 'limite_superior' => $limiteSuperior,
                 'desviacion' => $desviacion,
                 'desviacion_porcentaje' => $desviacionPorcentaje,
-                'tipo' => $tipo,
+                'tipo' => $tipoAlertaActual,
                 'edad_dias' => $edadDias,
                 'margen_edad' => [
                     'inferior' => "{$margenInferior}%",
                     'superior' => "{$margenSuperior}%"
                 ]
             ];
+            
+            // Agregar a todas las alertas
+            $alertas[] = $alerta;
             $totalFueraDeRango++;
+            
+            // Gestión de alertas activas
+            if ($alertaActualActiva === null) {
+                // No hay alerta activa, crear una nueva
+                $alertaActualActiva = [
+                    'inicio' => $alerta,
+                    'fin' => null,
+                    'tipo' => $tipoAlertaActual,
+                    'duracion_minutos' => 0,
+                    'lecturas_alerta' => 1,
+                    'estado' => 'activa'
+                ];
+            } elseif ($alertaActualActiva['tipo'] === $tipoAlertaActual) {
+                // La alerta activa es del mismo tipo, actualizar duración y contador
+                $inicioAlerta = Carbon::parse($alertaActualActiva['inicio']['fecha'] . ' ' . $alertaActualActiva['inicio']['hora']);
+                $alertaActualActiva['duracion_minutos'] = $inicioAlerta->diffInMinutes($fechaLectura);
+                $alertaActualActiva['lecturas_alerta']++;
+            } else {
+                // La alerta activa es de diferente tipo, cerrar la anterior y crear nueva
+                $alertaActualActiva['fin'] = [
+                    'fecha' => $fechaLectura->format('Y-m-d'),
+                    'hora' => $fechaLectura->format('H:i:s'),
+                    'motivo' => 'cambio_tipo',
+                    'nuevo_tipo' => $tipoAlertaActual
+                ];
+                $alertaActualActiva['estado'] = 'resuelta';
+                
+                // Agregar la alerta cerrada a las alertas activas históricas
+                $alertasActivas[] = $alertaActualActiva;
+                
+                // Crear nueva alerta activa
+                $alertaActualActiva = [
+                    'inicio' => $alerta,
+                    'fin' => null,
+                    'tipo' => $tipoAlertaActual,
+                    'duracion_minutos' => 0,
+                    'lecturas_alerta' => 1,
+                    'estado' => 'activa'
+                ];
+            }
+        } else {
+            // No hay alerta en esta lectura, si hay una alerta activa, cerrarla
+            if ($alertaActualActiva !== null) {
+                $alertaActualActiva['fin'] = [
+                    'fecha' => $fechaLectura->format('Y-m-d'),
+                    'hora' => $fechaLectura->format('H:i:s'),
+                    'motivo' => 'normalizada',
+                    'temperatura_normalizacion' => $valorLectura
+                ];
+                $alertaActualActiva['estado'] = 'resuelta';
+                
+                // Agregar la alerta cerrada a las alertas activas históricas
+                $alertasActivas[] = $alertaActualActiva;
+                
+                // Limpiar la alerta activa actual
+                $alertaActualActiva = null;
+            }
         }
     }
     
-    // 10. Calcular temperatura media global para el periodo
+    // Si al final del procesamiento hay una alerta activa, agregarla (sigue activa)
+    if ($alertaActualActiva !== null) {
+        $alertaActualActiva['estado'] = 'activa';
+        $alertasActivas[] = $alertaActualActiva;
+    }
+    
+    // 10. Calcular estadísticas
     $temperaturaMediaGlobal = $todasLasLecturas->avg('valor');
     $totalLecturas = $todasLasLecturas->count();
     $porcentajeFueraDeRango = $totalLecturas > 0 ? 
         round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
+    
+    // Estadísticas de alertas activas
+    $alertasActivasActuales = collect($alertasActivas)->where('estado', 'activa');
+    $alertasResueltasTotal = collect($alertasActivas)->where('estado', 'resuelta');
+    
+    $duracionTotalAlertas = collect($alertasActivas)->sum('duracion_minutos');
+    $promedioLecturasporAlerta = collect($alertasActivas)->avg('lecturas_alerta');
+    
+    // Separar alertas activas por tipo
+    $alertaActivaBaja = $alertasActivasActuales->where('tipo', 'baja')->first();
+    $alertaActivaAlta = $alertasActivasActuales->where('tipo', 'alta')->first();
     
     // 11. Preparar respuesta completa
     return response()->json([
@@ -994,11 +1072,24 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
             'lecturas_fuera_rango' => $totalFueraDeRango,
             'porcentaje_fuera_rango' => $porcentajeFueraDeRango
         ],
+        'resumen_alertas_activas' => [
+            'total_alertas_procesadas' => count($alertasActivas),
+            'alertas_activas_actuales' => $alertasActivasActuales->count(),
+            'alertas_resueltas' => $alertasResueltasTotal->count(),
+            'duracion_total_alertas_minutos' => $duracionTotalAlertas,
+            'promedio_lecturas_por_alerta' => round($promedioLecturasporAlerta, 1),
+            'hay_alerta_temperatura_baja' => $alertaActivaBaja !== null,
+            'hay_alerta_temperatura_alta' => $alertaActivaAlta !== null
+        ],
+        'alertas_activas_actuales' => [
+            'temperatura_baja' => $alertaActivaBaja,
+            'temperatura_alta' => $alertaActivaAlta
+        ],
         'datos_grafica' => $datosGrafica,
-        'alertas' => $alertas
+        'alertas' => $alertas, // Todas las alertas individuales
+        'historial_alertas_activas' => $alertasActivas // Historial completo de alertas activas
     ], Response::HTTP_OK);
 }
-
 /**
  * Obtiene datos de humedad para gráfica y tabla de alertas con márgenes variables
  * 
