@@ -46,8 +46,8 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 */
 Route::apiResource('camadas',         CamadaController::class);
 // Vincular / desvincular dispositivos a una camada
-Route::post   ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'attachDispositivo']);
-Route::delete ('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'detachDispositivo']);
+Route::post('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'attachDispositivo']);
+Route::delete('camadas/{camada}/dispositivos/{disp}', [CamadaController::class, 'detachDispositivo']);
 Route::get('dispositivos/{dispId}/peso-medio', [CamadaController::class, 'calcularPesoMedioPorRango']);
 Route::get('granjas/{codigoGranja}/dispositivos', [CamadaController::class, 'getDispositivosByGranja']);
 
@@ -57,8 +57,8 @@ Route::get('granjas/{codigoGranja}/dispositivos', [CamadaController::class, 'get
 //   - fecha=YYYY-MM-DD    (obligatorio)  
 //   - coefHomogeneidad=0.10 (opcional)
 Route::get('camadas/{camada}/pesadas', [CamadaController::class, 'calcularPesadasPorDia']);
-Route::get('camadas/{camada}/dispositivos/{disp}/pesadas-rango',[CamadaController::class, 'pesadasRango']);
-Route::get('camadas/{camada}/dispositivos',[CamadaController::class, 'getDispositivosByCamada']);
+Route::get('camadas/{camada}/dispositivos/{disp}/pesadas-rango', [CamadaController::class, 'pesadasRango']);
+Route::get('camadas/{camada}/dispositivos', [CamadaController::class, 'getDispositivosByCamada']);
 Route::get('dispositivos/{dispId}/temperatura-grafica-alertas', [CamadaController::class, 'getTemperaturaGraficaAlertas']);
 Route::get('dispositivos/{dispId}/humedad-grafica-alertas', [CamadaController::class, 'getHumedadGraficaAlertas']);
 Route::get('/dispositivos/{dispId}/datos-ambientales-diarios', [CamadaController::class, 'getDatosAmbientalesDiarios']);
@@ -67,6 +67,9 @@ Route::get('dispositivos/{dispId}/actividad', [CamadaController::class, 'monitor
 Route::get('dispositivos/{dispId}/luz', [CamadaController::class, 'monitorearLuz']);
 Route::get('/dispositivos/{dispId}/indices-ambientales-rango', [CamadaController::class, 'getIndicesAmbientalesRango'])
     ->name('dispositivos.indices-ambientales-rango');
+Route::get('dispositivos/{dispId}/humedad-cama-grafica-alertas', [CamadaController::class, 'getHumedadCamaGraficaAlertas']);
+Route::get('dispositivos/{dispId}/temperatura-cama-grafica-alertas', [CamadaController::class, 'getTemperaturaCamaGraficaAlertas']);
+
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
@@ -75,13 +78,13 @@ Route::get('dispositivos/{id}/camadas', [DispositivoController::class, 'getCamad
 
 Route::apiResource('empresas',        EmpresaController::class);
 Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])
-     ->name('empresas.granjas');
+    ->name('empresas.granjas');
 
 Route::apiResource('entradas-datos',  EntradaDatoController::class);
 
 Route::apiResource('granjas',         GranjaController::class);
 Route::get('granjas/{numeroRega}/camadas', [CamadaController::class, 'getByGranja'])
-     ->name('granjas.camadas');
+    ->name('granjas.camadas');
 Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
 Route::get('granjas/{numeroRega}/dispositivos-activos', [GranjaController::class, 'getDispositivosActivos'])
     ->name('granjas.dispositivos-activos');
@@ -105,8 +108,3 @@ Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate
 Route::get('/dashboard', [DashboardController::class, 'stats']);
 Route::get('/granjas/{numeroRega}/dashboard', [GranjaController::class, 'dashboard']);
 Route::get('/granjas/{numeroRega}/temperatura-media', [GranjaController::class, 'getTemperaturaMedia']);
-
-
-
-
-
