@@ -890,7 +890,6 @@ class CamadaController extends Controller
         }
 
         // 9. Procesar alertas (todas y activas)
-        // 9. Procesar alertas (todas y activas) - LÓGICA CORREGIDA
         $alertas = [];
         $alertasActivas = [];
         $alertaActualActiva = null; // Solo UNA alerta activa por dispositivo
@@ -946,7 +945,7 @@ class CamadaController extends Controller
                 $alertas[] = $alerta;
                 $totalFueraDeRango++;
 
-                // ✅ GESTIÓN DE ALERTAS ACTIVAS - SOLO UNA A LA VEZ
+                //  GESTIÓN DE ALERTAS ACTIVAS - SOLO UNA A LA VEZ
                 if ($alertaActualActiva === null) {
                     // No hay alerta activa, crear una nueva
                     $alertaActualActiva = [
@@ -958,12 +957,12 @@ class CamadaController extends Controller
                         'estado' => 'activa'
                     ];
                 } elseif ($alertaActualActiva['tipo'] === $tipoAlertaActual) {
-                    // ✅ MISMO TIPO: Solo actualizar duración y contador
+                    //  MISMO TIPO: Solo actualizar duración y contador
                     $inicioAlerta = Carbon::parse($alertaActualActiva['inicio']['fecha'] . ' ' . $alertaActualActiva['inicio']['hora']);
                     $alertaActualActiva['duracion_minutos'] = $inicioAlerta->diffInMinutes($fechaLectura);
                     $alertaActualActiva['lecturas_alerta']++;
                 } else {
-                    // ✅ TIPO DIFERENTE: Cerrar la anterior y crear nueva (REEMPLAZAR)
+                    //  TIPO DIFERENTE: Cerrar la anterior y crear nueva (REEMPLAZAR)
                     $alertaActualActiva['fin'] = [
                         'fecha' => $fechaLectura->format('Y-m-d'),
                         'hora' => $fechaLectura->format('H:i:s'),
@@ -975,7 +974,7 @@ class CamadaController extends Controller
                     // Agregar la alerta cerrada al historial
                     $alertasActivas[] = $alertaActualActiva;
 
-                    // ✅ CREAR NUEVA ALERTA (REEMPLAZANDO LA ANTERIOR)
+                    //  CREAR NUEVA ALERTA (REEMPLAZANDO LA ANTERIOR)
                     $alertaActualActiva = [
                         'inicio' => $alerta,
                         'fin' => null,
@@ -986,7 +985,7 @@ class CamadaController extends Controller
                     ];
                 }
             } else {
-                // ✅ NO HAY ALERTA: Si hay una alerta activa, cerrarla
+                //  NO HAY ALERTA: Si hay una alerta activa, cerrarla
                 if ($alertaActualActiva !== null) {
                     $alertaActualActiva['fin'] = [
                         'fecha' => $fechaLectura->format('Y-m-d'),
@@ -998,22 +997,22 @@ class CamadaController extends Controller
 
                     // Agregar al historial y limpiar
                     $alertasActivas[] = $alertaActualActiva;
-                    $alertaActualActiva = null; // ✅ LIMPIAR - No hay alerta activa
+                    $alertaActualActiva = null; //  LIMPIAR - No hay alerta activa
                 }
             }
         }
 
-        // ✅ IMPORTANTE: Si al final hay una alerta activa, agregarla
+
         if ($alertaActualActiva !== null) {
             $alertaActualActiva['estado'] = 'activa';
             $alertasActivas[] = $alertaActualActiva;
         }
 
-        // ✅ PREPARAR RESPUESTA FINAL - SOLO UNA ALERTA ACTIVA
+        //  PREPARAR RESPUESTA FINAL - SOLO UNA ALERTA ACTIVA
         $alertasActivasActuales = collect($alertasActivas)->where('estado', 'activa');
         $alertasResueltasTotal = collect($alertasActivas)->where('estado', 'resuelta');
 
-        // ✅ SOLO PUEDE HABER UNA ALERTA ACTIVA
+        //  SOLO PUEDE HABER UNA ALERTA ACTIVA
         $alertaActivaActual = $alertasActivasActuales->first(); // Solo la primera (debería ser única)
 
 
@@ -1024,12 +1023,7 @@ class CamadaController extends Controller
             round(($totalFueraDeRango / $totalLecturas) * 100, 2) : 0;
 
 
-        $duracionTotalAlertas = collect($alertasActivas)->sum('duracion_minutos');
-        $promedioLecturasporAlerta = collect($alertasActivas)->avg('lecturas_alerta');
 
-        // Separar alertas activas por tipo
-        $alertaActivaBaja = $alertasActivasActuales->where('tipo', 'baja')->first();
-        $alertaActivaAlta = $alertasActivasActuales->where('tipo', 'alta')->first();
 
         // 11. Preparar respuesta completa
         return response()->json([
@@ -1083,7 +1077,7 @@ class CamadaController extends Controller
                 'tipo_alerta_activa' => $alertaActivaActual ? $alertaActivaActual['tipo'] : null
             ],
             'alertas_activas_actuales' => [
-                // ✅ SOLO UNA ESTRUCTURA - La que esté activa
+                //  SOLO UNA ESTRUCTURA - La que esté activa
                 'temperatura_baja' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'baja') ? $alertaActivaActual : null,
                 'temperatura_alta' => ($alertaActivaActual && $alertaActivaActual['tipo'] === 'alta') ? $alertaActivaActual : null,
             ],
@@ -1092,6 +1086,211 @@ class CamadaController extends Controller
             'historial_alertas_activas' => $alertasActivas
         ], Response::HTTP_OK);
     }
+
+    /**
+     * Obtiene datos de temperatura de cama (sensor 12) para gráfica y tabla de alertas
+     * - Día 0–7: alerta si temp_cama ≤ temp_ambiental_media - 3°C
+     * - Día >7: alerta si temp_cama < temp_ambiental_media
+     *
+     * @param Request $request
+     * @param int     $dispId  ID del dispositivo
+     * @return JsonResponse
+     */
+    public function getTemperaturaCamaGraficaAlertas(Request $request, int $dispId): JsonResponse
+    {
+        // 1. Validar parámetros
+        $request->validate([
+            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+            'fecha_fin'    => 'required|date',
+        ]);
+        $fechaInicio = $request->query('fecha_inicio');
+        $fechaFin    = $request->query('fecha_fin');
+
+        // 2. Cargar dispositivo y camada asociada
+        $dispositivo = Dispositivo::findOrFail($dispId);
+        $serie       = $dispositivo->numero_serie;
+        $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+            ->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                    ->where(function ($q2) use ($fechaInicio) {
+                        $q2->whereNull('tb_camada.fecha_hora_final')
+                            ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                    });
+            })
+            ->select('tb_camada.*')
+            ->first();
+        if (! $camada) {
+            return response()->json([
+                'mensaje'     => 'No se encontró una camada activa en ese rango de fechas',
+                'dispositivo' => ['id' => $dispId, 'numero_serie' => $serie],
+            ], Response::HTTP_OK);
+        }
+
+        // 3. Sensores
+        $SENSOR_AMBIENTAL = 6;  // como en el método original
+        $SENSOR_CAMA      = 12; // nuevo sensor
+
+        // 4. Obtener datos diarios ambientales para gráfica
+        $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', $SENSOR_AMBIENTAL)
+            ->whereBetween('fecha', ["{$fechaInicio} 00:00:00", "{$fechaFin} 23:59:59"])
+            ->select(
+                DB::raw('DATE(fecha) as dia'),
+                DB::raw('ROUND(AVG(valor),2) as temp_media'),
+                DB::raw('MIN(valor) as temp_min'),
+                DB::raw('MAX(valor) as temp_max'),
+                DB::raw('COUNT(*) as lecturas')
+            )
+            ->groupBy('dia')
+            ->orderBy('dia')
+            ->get();
+
+        // 5. Obtener todas las lecturas de cama individuales
+        $lecturasCama = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', $SENSOR_CAMA)
+            ->whereBetween('fecha', ["{$fechaInicio} 00:00:00", "{$fechaFin} 23:59:59"])
+            ->orderBy('fecha')
+            ->get(['valor', 'fecha']);
+
+        // 6. Preparar datos para gráfica: combinar fechas ambientales y cama
+        $datosGrafica = [];
+        foreach ($datosDiarios as $dato) {
+            $dia = $dato->dia;
+            // calcular edad en días
+            $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($dia);
+
+            $datosGrafica[] = [
+                'fecha'         => $dia,
+                'edad_dias'     => $edadDias,
+                'temp_ambiental_media' => $dato->temp_media,
+                'temp_cama_ideal'      => $dato->temp_media, // límite base
+                'temp_min'      => $dato->temp_min,
+                'temp_max'      => $dato->temp_max,
+                'lecturas_ambientales' => $dato->lecturas,
+                // las camas no se agregan aquí; se muestran en 'alertas'
+            ];
+        }
+
+        // 7. Procesar alertas de cama
+        $alertas        = [];
+        $alertasActivas = [];
+        $actualActiva   = null;
+
+        foreach ($lecturasCama as $lec) {
+            $ts    = Carbon::parse($lec->fecha);
+            $dia   = $ts->format('Y-m-d');
+            $valor = (float)$lec->valor;
+            // buscar temp ambiental media de ese día
+            $ambiental = $datosDiarios->firstWhere('dia', $dia)->temp_media ?? null;
+            if ($ambiental === null) {
+                continue;
+            }
+            // edad
+            $edadDias = Carbon::parse($camada->fecha_hora_inicio)->diffInDays($ts);
+
+            // determinar si hay alerta
+            $hayAlerta = false;
+            if ($edadDias <= 7) {
+                $hayAlerta = ($valor <= $ambiental - 3.0);
+            } else {
+                $hayAlerta = ($valor < $ambiental);
+            }
+
+            if ($hayAlerta) {
+                $evento = [
+                    'fecha'        => $ts->format('Y-m-d'),
+                    'hora'         => $ts->format('H:i:s'),
+                    'valor_cama'   => $valor,
+                    'temp_ambiental' => $ambiental,
+                    'edad_dias'    => $edadDias,
+                ];
+                $alertas[] = $evento;
+
+                if (! $actualActiva) {
+                    // iniciar alerta
+                    $actualActiva = [
+                        'inicio'           => $evento,
+                        'fin'              => null,
+                        'duracion_minutos' => 0,
+                        'lecturas_alerta'  => 1,
+                        'estado'           => 'activa',
+                    ];
+                } else {
+                    // acumular
+                    $t0 = Carbon::parse($actualActiva['inicio']['fecha'] . ' ' . $actualActiva['inicio']['hora']);
+                    $actualActiva['duracion_minutos'] = $t0->diffInMinutes($ts);
+                    $actualActiva['lecturas_alerta']++;
+                }
+            } else {
+                // normalizó → cerrar alerta si existía
+                if ($actualActiva) {
+                    $actualActiva['fin']    = $evento ?? [
+                        'fecha' => $ts->format('Y-m-d'),
+                        'hora'  => $ts->format('H:i:s'),
+                    ];
+                    $actualActiva['estado'] = 'resuelta';
+                    $alertasActivas[]       = $actualActiva;
+                    $actualActiva = null;
+                }
+            }
+        }
+        // si quedó abierta al final
+        if ($actualActiva) {
+            $alertasActivas[] = $actualActiva;
+        }
+
+        // 8. Estadísticas
+        $totalLecturas   = $lecturasCama->count();
+        $totalAlertas    = count($alertas);
+        $porcentajeAlertas = $totalLecturas
+            ? round($totalAlertas / $totalLecturas * 100, 2)
+            : 0;
+
+        $activas  = collect($alertasActivas)->where('estado', 'activa');
+        $resueltas = collect($alertasActivas)->where('estado', 'resuelta');
+        $activa   = $activas->first();
+
+        // 9. Respuesta final
+        return response()->json([
+            'dispositivo' => [
+                'id'           => $dispId,
+                'numero_serie' => $serie,
+            ],
+            'camada' => [
+                'id'     => $camada->id_camada,
+                'nombre' => $camada->nombre_camada,
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin'    => $fechaFin,
+            ],
+            'configuracion' => [
+                'reglas_alerta' => [
+                    ['edad' => '0-7', 'condicion' => 'temp_cama ≤ temp_amb - 3°C'],
+                    ['edad' => '≥8',  'condicion' => 'temp_cama < temp_amb'],
+                ],
+            ],
+            'resumen' => [
+                'total_lecturas_cama'    => $totalLecturas,
+                'total_eventos_alerta'   => $totalAlertas,
+                'porcentaje_alertas'     => $porcentajeAlertas,
+            ],
+            'resumen_alertas_activas' => [
+                'procesadas'            => count($alertasActivas),
+                'activas_actuales'      => $activas->count(),
+                'resueltas'             => $resueltas->count(),
+                'duracion_total_min'    => collect($alertasActivas)->sum('duracion_minutos'),
+                'promedio_por_alerta'   => collect($alertasActivas)->avg('lecturas_alerta'),
+                'hay_alerta_activa'     => $activa !== null,
+            ],
+            'alertas_activas' => $activa,
+            'datos_grafica'   => $datosGrafica,
+            'alertas'         => $alertas,
+            'historial'       => $alertasActivas,
+        ], Response::HTTP_OK);
+    }
+
     /**
      * Obtiene datos de humedad para gráfica y tabla de alertas con márgenes variables
      * 
@@ -1394,6 +1593,228 @@ class CamadaController extends Controller
             'historial_alertas_activas' => $alertasActivas
         ], Response::HTTP_OK);
     }
+
+    /**
+     * Obtiene datos de humedad de cama (sensor 13) para gráfica y tabla de alertas con rangos:
+     *   - <20%: seco
+     *   - 20–30%: normal (25% ideal)
+     *   - >40%: alerta por húmedo
+     *
+     * @param Request $request
+     * @param int     $dispId  ID del dispositivo
+     * @return JsonResponse
+     */
+    public function getHumedadCamaGraficaAlertas(Request $request, int $dispId): JsonResponse
+    {
+        // 1. Validar parámetros
+        $request->validate([
+            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+            'fecha_fin'    => 'required|date',
+        ]);
+        $fechaInicio = $request->query('fecha_inicio');
+        $fechaFin    = $request->query('fecha_fin');
+
+        // 2. Cargar dispositivo y camada asociada
+        $dispositivo = Dispositivo::findOrFail($dispId);
+        $serie       = $dispositivo->numero_serie;
+        $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+            ->where(function ($q) use ($fechaInicio, $fechaFin) {
+                $q->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+                    ->where(function ($q2) use ($fechaInicio) {
+                        $q2->whereNull('tb_camada.fecha_hora_final')
+                            ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+                    });
+            })
+            ->select('tb_camada.*')
+            ->first();
+        if (!$camada) {
+            return response()->json([
+                'mensaje'     => 'No se encontró una camada activa en ese rango de fechas',
+                'dispositivo' => ['id' => $dispId, 'numero_serie' => $serie],
+            ], Response::HTTP_OK);
+        }
+
+        // 3. Definir sensor y umbrales fijos
+        $SENSOR_HUMEDAD_CAMA = 13;
+        $UMBRAL_SECO         = 20;  // <20%
+        $UMBRAL_NORMAL_MIN   = 20;  // 20–30%
+        $UMBRAL_NORMAL_MAX   = 30;
+        $IDEAL               = 25;
+        $UMBRAL_HUME_ALTA    = 40;  // >40%
+
+        // 4. Lecturas individuales para alertas
+        $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', $SENSOR_HUMEDAD_CAMA)
+            ->whereBetween('fecha', ["{$fechaInicio} 00:00:00", "{$fechaFin} 23:59:59"])
+            ->orderBy('fecha')
+            ->get(['valor', 'fecha']);
+
+        // 5. Datos diarios agregados para la gráfica
+        $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', $SENSOR_HUMEDAD_CAMA)
+            ->whereBetween('fecha', ["{$fechaInicio} 00:00:00", "{$fechaFin} 23:59:59"])
+            ->select(
+                DB::raw('DATE(fecha) as dia'),
+                DB::raw('ROUND(AVG(valor),2) as humedad_media'),
+                DB::raw('MIN(valor) as humedad_min'),
+                DB::raw('MAX(valor) as humedad_max'),
+                DB::raw('COUNT(*) as lecturas')
+            )
+            ->groupBy('dia')
+            ->orderBy('dia')
+            ->get();
+
+        // 6. Preparar datos para la gráfica
+        $datosGrafica = [];
+        foreach ($datosDiarios as $d) {
+            $datosGrafica[] = [
+                'fecha'          => $d->dia,
+                'humedad_media'  => $d->humedad_media,
+                'humedad_min'    => $d->humedad_min,
+                'humedad_max'    => $d->humedad_max,
+                'ideal'          => $IDEAL,
+                'seco_max'       => $UMBRAL_SECO,
+                'normal_min'     => $UMBRAL_NORMAL_MIN,
+                'normal_max'     => $UMBRAL_NORMAL_MAX,
+                'alerta_humedo'  => $UMBRAL_HUME_ALTA,
+                'lecturas'       => $d->lecturas,
+            ];
+        }
+
+        // 7. Procesar alertas (todas y activas)
+        $alertas         = [];
+        $alertasActivas  = [];
+        $alertaActual    = null;
+        $totalFueraRango = 0;
+
+        foreach ($todasLasLecturas as $lectura) {
+            $valor = (float)$lectura->valor;
+            $tipo  = null;
+
+            if ($valor < $UMBRAL_SECO) {
+                $tipo = 'seca';
+            } elseif ($valor > $UMBRAL_HUME_ALTA) {
+                $tipo = 'humeda';
+            }
+
+            if ($tipo !== null) {
+                $totalFueraRango++;
+                $evento = [
+                    'fecha'      => Carbon::parse($lectura->fecha)->format('Y-m-d'),
+                    'hora'       => Carbon::parse($lectura->fecha)->format('H:i:s'),
+                    'valor'      => $valor,
+                    'tipo'       => $tipo,
+                    'ideal'      => $IDEAL,
+                    'seco_max'   => $UMBRAL_SECO,
+                    'humeda_min' => $UMBRAL_HUME_ALTA,
+                ];
+                $alertas[] = $evento;
+
+                if ($alertaActual === null) {
+                    // iniciar alerta
+                    $alertaActual = [
+                        'inicio'           => $evento,
+                        'fin'              => null,
+                        'tipo'             => $tipo,
+                        'duracion_minutos' => 0,
+                        'lecturas_alerta'  => 1,
+                        'estado'           => 'activa',
+                    ];
+                } elseif ($alertaActual['tipo'] === $tipo) {
+                    // mismo tipo, acumular
+                    $tsInicio = Carbon::parse($alertaActual['inicio']['fecha'] . ' ' . $alertaActual['inicio']['hora']);
+                    $alertaActual['duracion_minutos'] = $tsInicio->diffInMinutes(Carbon::parse($lectura->fecha));
+                    $alertaActual['lecturas_alerta']++;
+                } else {
+                    // cerrar anterior y abrir nueva
+                    $alertaActual['fin']    = $evento;
+                    $alertaActual['estado'] = 'resuelta';
+                    $alertasActivas[]       = $alertaActual;
+
+                    $alertaActual = [
+                        'inicio'           => $evento,
+                        'fin'              => null,
+                        'tipo'             => $tipo,
+                        'duracion_minutos' => 0,
+                        'lecturas_alerta'  => 1,
+                        'estado'           => 'activa',
+                    ];
+                }
+            } else {
+                // si volvió a rango, cerrar alerta activa
+                if ($alertaActual !== null) {
+                    $alertaActual['fin'] = [
+                        'fecha'  => Carbon::parse($lectura->fecha)->format('Y-m-d'),
+                        'hora'   => Carbon::parse($lectura->fecha)->format('H:i:s'),
+                        'motivo' => 'normalizada',
+                    ];
+                    $alertaActual['estado'] = 'resuelta';
+                    $alertasActivas[] = $alertaActual;
+                    $alertaActual = null;
+                }
+            }
+        }
+        // si quedó abierta al final
+        if ($alertaActual !== null) {
+            $alertasActivas[] = $alertaActual;
+        }
+
+        // 8. Estadísticas de alertas
+        $totalLecturas  = $todasLasLecturas->count();
+        $porcentajeFuera = $totalLecturas
+            ? round($totalFueraRango / $totalLecturas * 100, 2)
+            : 0;
+
+        $activasActuales = collect($alertasActivas)->where('estado', 'activa');
+        $resueltas       = collect($alertasActivas)->where('estado', 'resuelta');
+        $alertaActiva    = $activasActuales->first();
+
+        // 9. Responder JSON
+        return response()->json([
+            'dispositivo' => [
+                'id'           => $dispId,
+                'numero_serie' => $serie,
+            ],
+            'camada' => [
+                'id'     => $camada->id_camada,
+                'nombre' => $camada->nombre_camada,
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin'    => $fechaFin,
+            ],
+            'configuracion' => [
+                'rangos_alerta' => [
+                    ['rango' => 'seco',   'humedad_max' => '20%'],
+                    ['rango' => 'normal', 'humedad_min' => '20%', 'humedad_max' => '30%', 'ideal' => '25%'],
+                    ['rango' => 'humeda', 'humedad_min' => '40%'],
+                ],
+            ],
+            'resumen' => [
+                'total_lecturas'        => $totalLecturas,
+                'fuera_de_rango'        => $totalFueraRango,
+                'porcentaje_fuera'      => $porcentajeFuera,
+            ],
+            'resumen_alertas_activas' => [
+                'total_alertas_procesadas'    => count($alertasActivas),
+                'alertas_activas_actuales'    => $activasActuales->count(),
+                'alertas_resueltas'           => $resueltas->count(),
+                'duracion_total_alertas_minutos' => collect($alertasActivas)->sum('duracion_minutos'),
+                'promedio_lecturas_por_alerta'   => collect($alertasActivas)->avg('lecturas_alerta'),
+                'hay_alerta_activa'            => $alertaActiva !== null,
+                'tipo_alerta_activa'           => $alertaActiva['tipo'] ?? null,
+            ],
+            'alertas_activas_actuales' => [
+                'humedad_seca'  => $alertaActiva && $alertaActiva['tipo'] === 'seca'  ? $alertaActiva : null,
+                'humedad_humeda' => $alertaActiva && $alertaActiva['tipo'] === 'humeda' ? $alertaActiva : null,
+            ],
+            'datos_grafica' => $datosGrafica,
+            'alertas'       => $alertas,
+            'historial'     => $alertasActivas,
+        ], Response::HTTP_OK);
+    }
+
 
     /**
      * Obtiene todas las lecturas individuales de temperatura o humedad en un rango de fechas
