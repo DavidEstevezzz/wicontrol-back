@@ -842,10 +842,10 @@ public function getTemperaturaGraficaAlertas(Request $request, int $dispId): Jso
     
     // 6. Obtener todas las lecturas individuales ordenadas por fecha para procesar alertas activas
     $todasLasLecturas = EntradaDato::where('id_dispositivo', $serie)
-        ->where('id_sensor', $SENSOR_TEMPERATURA)
-        ->whereBetween('fecha', [$fechaInicio, $fechaFin])
-        ->orderBy('fecha')
-        ->get(['valor', 'fecha']);
+    ->where('id_sensor', $SENSOR_TEMPERATURA)
+    ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])  // ✅ Incluye todo el último día
+    ->orderBy('fecha')
+    ->get(['valor', 'fecha']);
     
     // 7. Obtener datos diarios para la gráfica
     $datosDiarios = EntradaDato::where('id_dispositivo', $serie)
