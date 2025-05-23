@@ -15,7 +15,7 @@ class CalibrationController extends Controller
     public function calibrate(Request $request)
     {
         $log = Log::channel('calibration');
-        // Raw query string (JSON esperado)
+        // Raw query string (JSON esperado)d
         $raw = $request->getQueryString();
         $log->info("Raw query: {$raw}");
 
