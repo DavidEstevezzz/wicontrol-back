@@ -19,7 +19,7 @@ use App\Http\Controllers\PesoPavoButPremiumController;
 use App\Http\Controllers\PesoPavoNicholasSelectController;
 use App\Http\Controllers\PesoPavoHybridConverterController;
 use App\Http\Controllers\PesoReproductorRossController;
-use App\Http\Controllers\Api\DeviceConfigurationController;
+use App\Http\Controllers\DeviceConfigurationController;
 
 
 /*
@@ -73,6 +73,7 @@ Route::get('dispositivos/{dispId}/temperatura-cama-grafica-alertas', [CamadaCont
 
 
 Route::get('/configure.php', [DeviceConfigurationController::class, 'configure']);
+
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);

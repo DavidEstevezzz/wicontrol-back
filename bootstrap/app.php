@@ -13,7 +13,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->validateCsrfTokens(except: [
-            'configure.php',              // Ruta original
+            'configure.php',              // Ruta legacy en web.php
+            'api/configure.php',
             'api/device/configure',       // Ruta API moderna
         ]);
     })
