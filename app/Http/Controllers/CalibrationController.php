@@ -23,7 +23,7 @@ class CalibrationController extends Controller
         if (empty($raw) || ! $this->isValidJson($raw)) {
             $log->warning("Invalid JSON received: {$raw}");
             return response('@ERROR@', 400)
-                   ->header('Content-Type', 'text/plain');
+                ->header('Content-Type', 'text/plain');
         }
 
         // Decodificar parámetros
@@ -40,9 +40,9 @@ class CalibrationController extends Controller
         $disp = Dispositivo::find($dev);
         if (! $disp) {
             $log->warning("Device not found: {$dev}");
-            $out = ['dev'=>$dev,'ste'=>1,'val'=>0,'abo'=>1];
-            return response('@'.json_encode($out).'@', 404)
-                   ->header('Content-Type', 'text/plain');
+            $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
+            return response('@' . json_encode($out) . '@', 404)
+                ->header('Content-Type', 'text/plain');
         }
 
         // Procesar según paso
@@ -57,18 +57,18 @@ class CalibrationController extends Controller
                     ]);
                     if ($updated) {
                         $abo = ($disp->pesoCalibracion != -1) ? 0 : 1;
-                        $out = ['dev'=>$dev,'ste'=>1,'val'=>0,'abo'=>$abo];
+                        $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => $abo];
                     } else {
-                        $out = ['dev'=>$dev,'ste'=>1,'val'=>0,'abo'=>1];
+                        $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
                         $log->error("Step 0 update failed for {$dev}");
                     }
                 } catch (\Exception $e) {
-                    $out = ['dev'=>$dev,'ste'=>1,'val'=>0,'abo'=>1];
+                    $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
                     $log->error("Exception in step 0 for {$dev}: " . $e->getMessage());
                 }
                 $log->info("Step 0 output: " . json_encode($out));
-                return response('@'.json_encode($out).'@',200)
-                       ->header('Content-Type','text/plain');
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 1:
                 if ($err == 0) {
@@ -88,21 +88,21 @@ class CalibrationController extends Controller
                     ]);
                     if ($updated) {
                         if ($disp->pesoCalibracion != 0) {
-                            $out = ['dev'=>$dev,'ste'=>3,'val'=>$disp->pesoCalibracion,'abo'=>0];
+                            $out = ['dev' => $dev, 'ste' => 3, 'val' => $disp->pesoCalibracion, 'abo' => 0];
                         } else {
-                            $out = ['dev'=>$dev,'ste'=>2,'val'=>0,'abo'=>0];
+                            $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 0];
                         }
                     } else {
-                        $out = ['dev'=>$dev,'ste'=>2,'val'=>0,'abo'=>1];
+                        $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
                         $log->error("Step 2 update failed for {$dev}");
                     }
                 } catch (\Exception $e) {
-                    $out = ['dev'=>$dev,'ste'=>2,'val'=>0,'abo'=>1];
+                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
                     $log->error("Exception in step 2 for {$dev}: " . $e->getMessage());
                 }
                 $log->info("Step 2 output: " . json_encode($out));
-                return response('@'.json_encode($out).'@',200)
-                       ->header('Content-Type','text/plain');
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 3:
                 if ($err == 0) {
@@ -123,26 +123,26 @@ class CalibrationController extends Controller
                         ]);
                         if ($updated) {
                             if ($disp->pesoCalibracion == 0) {
-                                $out = ['dev'=>$dev,'ste'=>5,'val'=>0,'abo'=>0];
+                                $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 0];
                             } else {
-                                $out = ['dev'=>$dev,'ste'=>4,'val'=>0,'abo'=>0];
+                                $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 0];
                             }
                         } else {
-                            $out = ['dev'=>$dev,'ste'=>4,'val'=>0,'abo'=>1];
+                            $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
                             $log->error("Step 4 update failed for {$dev}");
                         }
                     } catch (\Exception $e) {
-                        $out = ['dev'=>$dev,'ste'=>4,'val'=>0,'abo'=>1];
+                        $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
                         $log->error("Exception in step 4 for {$dev}: " . $e->getMessage());
                     }
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $out = ['dev'=>$dev,'ste'=>2,'val'=>0,'abo'=>1];
+                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
                     $log->error("Step 4: {$dev} error calibrating with weight, aborting, code: {$err}");
                 }
                 $log->info("Step 4 output: " . json_encode($out));
-                return response('@'.json_encode($out).'@',200)
-                       ->header('Content-Type','text/plain');
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 5:
                 if ($err == 0) {
@@ -160,32 +160,32 @@ class CalibrationController extends Controller
                             'calibrado'               => 6,
                             'runCalibracion'          => 0,
                             'errorCalib'              => 0,
-                            'fecha_ultima_calibracion'=> Carbon::now('Europe/Paris'),
+                            'fecha_ultima_calibracion' => Carbon::now('Europe/Paris'),
                         ]);
                         if ($updated) {
-                            $out = ['dev'=>$dev,'ste'=>6,'val'=>0,'abo'=>0];
+                            $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 0];
                         } else {
-                            $out = ['dev'=>$dev,'ste'=>6,'val'=>0,'abo'=>1];
+                            $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 1];
                             $log->error("Step 6 update failed for {$dev}");
                         }
                     } catch (\Exception $e) {
-                        $out = ['dev'=>$dev,'ste'=>6,'val'=>0,'abo'=>1];
+                        $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 1];
                         $log->error("Exception in step 6 for {$dev}: " . $e->getMessage());
                     }
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $out = ['dev'=>$dev,'ste'=>2,'val'=>0,'abo'=>1];
+                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
                     $log->error("Step 6: {$dev} error finalizing calibration, code: {$err}");
                 }
                 $log->info("Step 6 output: " . json_encode($out));
-                return response('@'.json_encode($out).'@',200)
-                       ->header('Content-Type','text/plain');
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             default:
                 $log->warning("Unknown step: {$step} for {$dev}, aborting.");
-                $out = ['dev'=>$dev,'ste'=>$step,'val'=>0,'abo'=>1];
-                return response('@'.json_encode($out).'@',200)
-                       ->header('Content-Type','text/plain');
+                $out = ['dev' => $dev, 'ste' => $step, 'val' => 0, 'abo' => 1];
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
         }
     }
 
@@ -199,9 +199,9 @@ class CalibrationController extends Controller
         ]);
         $disp = Dispositivo::find($data['device']);
         if (! $disp) {
-            return response()->json(['success'=>false,'messages'=>'Device not found'],404);
+            return response()->json(['success' => false, 'messages' => 'Device not found'], 404);
         }
-        return response()->json(['success'=>true,'messages'=> $disp]);
+        return response()->json(['success' => true, 'messages' => json_encode($disp)]);
     }
 
     /**
@@ -216,18 +216,18 @@ class CalibrationController extends Controller
         ]);
         $disp = Dispositivo::find($data['device']);
         if (! $disp) {
-            return response()->json(['success'=>false,'messages'=>'Device not found'],404);
+            return response()->json(['success' => false, 'messages' => 'Device not found'], 404);
         }
         if ($data['weight'] == 0) {
             $disp->update([
                 'pesoCalibracion'        => 0,
                 'calibrado'              => 0,
                 'errorCalib'             => 0,
-                'fecha_ultima_calibracion'=> null,
+                'fecha_ultima_calibracion' => null,
                 'runCalibracion'         => 1,
             ]);
         } else {
-            $disp->update(['pesoCalibracion'=>$data['weight'],'runCalibracion'=>1]);
+            $disp->update(['pesoCalibracion' => $data['weight'], 'runCalibracion' => 1]);
         }
         if ($data['step'] == 5) {
             $disp->update([
@@ -236,7 +236,7 @@ class CalibrationController extends Controller
                 'runCalibracion'  => 0,
             ]);
         }
-        return response()->json(['success'=>true,'messages'=>'actualizada Ok.']);
+        return response()->json(['success' => true, 'messages' => 'actualizada Ok.']);
     }
 
     /**
