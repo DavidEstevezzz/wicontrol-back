@@ -195,7 +195,7 @@ class CalibrationController extends Controller
     public function getStep(Request $request)
     {
         $data = $request->validate([
-            'device' => 'required|string',
+            'device' => 'required|integer|exists:tb_dispositivo,id',
         ]);
         $disp = Dispositivo::find($data['device']);
         if (! $disp) {
@@ -210,7 +210,7 @@ class CalibrationController extends Controller
     public function sendStep(Request $request)
     {
         $data = $request->validate([
-            'device' => 'required|string',
+            'device' => 'required|integer|exists:tb_dispositivo,id',
             'weight' => 'required|numeric',
             'step'   => 'required|integer',
         ]);
