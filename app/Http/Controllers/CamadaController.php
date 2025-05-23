@@ -1931,13 +1931,7 @@ class CamadaController extends Controller
         ], Response::HTTP_OK);
     }
 
-    /**
-     * Obtiene datos ambientales diarios para un dispositivo en una fecha específica
-     * 
-     * @param Request $request
-     * @param int $dispId ID del dispositivo
-     * @return JsonResponse
-     */
+    
     /**
      * Obtiene datos ambientales diarios para un dispositivo en una fecha específica
      * 

@@ -12,7 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        $middleware->validateCsrfTokens(except: [
+            'configure.php',              // Ruta original
+            'api/device/configure',       // Ruta API moderna
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

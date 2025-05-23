@@ -65,6 +65,14 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'device_configuration' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/logConfigure.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'permission' => 0664,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),

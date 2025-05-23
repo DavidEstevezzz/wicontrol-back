@@ -19,6 +19,7 @@ use App\Http\Controllers\PesoPavoButPremiumController;
 use App\Http\Controllers\PesoPavoNicholasSelectController;
 use App\Http\Controllers\PesoPavoHybridConverterController;
 use App\Http\Controllers\PesoReproductorRossController;
+use App\Http\Controllers\Api\DeviceConfigurationController;
 
 
 /*
@@ -70,6 +71,8 @@ Route::get('/dispositivos/{dispId}/indices-ambientales-rango', [CamadaController
 Route::get('dispositivos/{dispId}/humedad-cama-grafica-alertas', [CamadaController::class, 'getHumedadCamaGraficaAlertas']);
 Route::get('dispositivos/{dispId}/temperatura-cama-grafica-alertas', [CamadaController::class, 'getTemperaturaCamaGraficaAlertas']);
 
+
+Route::get('/configure.php', [DeviceConfigurationController::class, 'configure']);
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
