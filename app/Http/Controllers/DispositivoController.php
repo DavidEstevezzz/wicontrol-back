@@ -24,7 +24,7 @@ class DispositivoController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'id_instalacion'            => ['required','integer','exists:tb_instalacion,id_instalacion'],
+            'id_instalacion'            => ['required','integer'],
             'numero_serie'              => ['required','string','max:50'],
             'ip_address'                => ['nullable','string','max:30'],
             'bateria'                   => ['nullable','string','max:11'],

@@ -73,6 +73,19 @@ return [
             'permission' => 0664,
         ],
 
+        'device_receiver' => [
+        'driver' => 'single',
+        'path' => storage_path('logs/logReceive.log'),
+        'level' => env('LOG_LEVEL', 'debug'),
+        'days' => 14,
+        'permission' => 0664,
+    ],
+    'calibration' => [
+            'driver' => 'single',
+            'path'   => storage_path('logs/calibration.log'),
+            'level'  => 'debug',
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
