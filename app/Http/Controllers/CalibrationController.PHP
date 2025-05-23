@@ -240,7 +240,7 @@ class CalibrationController extends Controller
     }
 
     /**
-     * Valida que una cadena sea JSON válido
+     * Valida que una cadena sea JSON válidoo
      */
     private function isValidJson(string $str): bool
     {
