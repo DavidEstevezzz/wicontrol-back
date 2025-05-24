@@ -15,20 +15,29 @@ class CalibrationController extends Controller
     public function calibrate(Request $request)
     {
         $log = Log::channel('calibration');
-        // Raw query string (JSON esperado)
-        $raw = $request->getQueryString();
-        $log->info("Raw query: {$raw}");
+        
+        // Obtener la query string como en receive.php
+        $finalQueryString = $_SERVER['QUERY_STRING'] ?? '';
+        
+        // Si está vacío, intentar otros métodos
+        if (empty($finalQueryString)) {
+            $finalQueryString = $request->getQueryString() ?? '';
+        }
+        
+        // IMPORTANTE: Decodificar URL encoding
+        $finalQueryString = urldecode($finalQueryString);
+        
+        $log->info("Raw query: {$finalQueryString}");
 
         // Validar JSON crudo
-        if (empty($raw) || ! $this->isValidJson($raw)) {
-            $log->warning("Invalid JSON received: {$raw}");
+        if (empty($finalQueryString) || ! $this->isValidJson($finalQueryString)) {
+            $log->warning("Invalid JSON received: {$finalQueryString}");
             return response('@ERROR@', 400)
                 ->header('Content-Type', 'text/plain');
         }
 
         // Decodificar parámetros
-        $json   = urldecode($raw);
-        $params = json_decode($json);
+        $params = json_decode($finalQueryString);
         $dev    = $params->dev ?? null;
         $step   = $params->ste ?? null;
         $val    = $params->val ?? null;
@@ -36,14 +45,16 @@ class CalibrationController extends Controller
         $tim    = $params->tim ?? null;
         $log->info('Parsed params: ' . json_encode($params));
 
-        // Buscar dispositivo por id_dispositivo
-        $disp = Dispositivo::find($dev);
+        // CORREGIDO: Buscar dispositivo por numero_serie, no por id
+        $disp = Dispositivo::where('numero_serie', $dev)->first();
         if (! $disp) {
             $log->warning("Device not found: {$dev}");
             $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
             return response('@' . json_encode($out) . '@', 404)
                 ->header('Content-Type', 'text/plain');
         }
+
+        $log->info("Device found - ID: {$disp->id}, Serial: {$disp->numero_serie}");
 
         // Procesar según paso
         switch ($step) {
