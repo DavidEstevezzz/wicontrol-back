@@ -13,12 +13,21 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->validateCsrfTokens(except: [
+            // Versiones con minúscula
             'configure.php',              // Configuración de dispositivos
             'receive.php',                // Recepción de datos
             'api/configure.php',          
-            'api/receive.php',       // Ruta API moderna
+            'api/receive.php',            // Ruta API moderna
             'calibrate',
-            'api/calibrate',       // Ruta API moderna
+            'api/calibrate',              // Ruta API moderna
+            
+            // Versiones con mayúscula (para compatibilidad)
+            'Configure.php',              // Configuración de dispositivos
+            'Receive.php',                // Recepción de datos
+            'api/Configure.php',          
+            'api/Receive.php',            // Ruta API moderna
+            'Calibrate',
+            'api/Calibrate',              // Ruta API moderna
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
