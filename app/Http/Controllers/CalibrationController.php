@@ -16,7 +16,16 @@ class CalibrationController extends Controller
     {
         $log = Log::channel('calibration');
         
-        // Obtener la query string como en receive.php
+        // Log para confirmar que el método se ejecuta
+        $log->info('=== MÉTODO CALIBRATE EJECUTADO ===');
+        
+        // Configurar timezone
+        config(['app.timezone' => 'Europe/Paris']);
+        
+        // Debugging completo de la petición
+        $log->info('Nuevo Get: ' . Carbon::now('Europe/Paris')->format('Y-m-d H:i:s'));
+        
+        // Obtener la query string como en el PHP original - EXACTAMENTE IGUAL
         $finalQueryString = $_SERVER['QUERY_STRING'] ?? '';
         
         // Si está vacío, intentar otros métodos
@@ -24,10 +33,20 @@ class CalibrationController extends Controller
             $finalQueryString = $request->getQueryString() ?? '';
         }
         
-        // IMPORTANTE: Decodificar URL encoding
+        // Si aún está vacío, intentar desde REQUEST_URI
+        if (empty($finalQueryString)) {
+            $requestUri = $request->server('REQUEST_URI') ?? '';
+            if (strpos($requestUri, '?') !== false) {
+                $finalQueryString = substr($requestUri, strpos($requestUri, '?') + 1);
+            }
+        }
+        
+        $log->info('Query String RAW: ' . $finalQueryString);
+        
+        // IMPORTANTE: Decodificar URL encoding (navegadores lo encodean automáticamente)
         $finalQueryString = urldecode($finalQueryString);
         
-        $log->info("Raw query: {$finalQueryString}");
+        $log->info('Query String decoded: ' . $finalQueryString);
 
         // Validar JSON crudo
         if (empty($finalQueryString) || ! $this->isValidJson($finalQueryString)) {
@@ -35,6 +54,8 @@ class CalibrationController extends Controller
             return response('@ERROR@', 400)
                 ->header('Content-Type', 'text/plain');
         }
+        
+        $log->info('Query string procesada correctamente, longitud: ' . strlen($finalQueryString));
 
         // Decodificar parámetros
         $params = json_decode($finalQueryString);
