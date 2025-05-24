@@ -16,6 +16,12 @@ class CalibrationController extends Controller
     {
         $log = Log::channel('calibration');
 
+        $log->info('=== PETICIÓN RECIBIDA ===');
+        $log->info('IP: ' . $request->ip());
+        $log->info('URL: ' . $request->fullUrl());
+        $log->info('Method: ' . $request->method());
+        $log->info('Headers: ' . json_encode($request->headers->all()));
+
         // Log para confirmar que el método se ejecuta
         $log->info('=== MÉTODO CALIBRATE EJECUTADO ===');
 
