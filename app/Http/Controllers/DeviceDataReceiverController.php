@@ -28,23 +28,42 @@ class DeviceDataReceiverController extends Controller
         // Configurar timezone
         config(['app.timezone' => 'Europe/Paris']);
         
-        // Obtener la query string completa
-        $queryString = $request->getQueryString();
-        
-        // Log inicial
+        // Debugging completo de la petición
         Log::channel('device_receiver')->info('Nuevo Get: ' . Carbon::now('Europe/Paris')->format('Y-m-d H:i:s'));
-        Log::channel('device_receiver')->info('Query String: ' . $queryString);
+        
+        // Obtener la query string como en el PHP original - EXACTAMENTE IGUAL
+        $finalQueryString = $_SERVER['QUERY_STRING'] ?? '';
+        
+        // Si está vacío, intentar otros métodos
+        if (empty($finalQueryString)) {
+            $finalQueryString = $request->getQueryString() ?? '';
+        }
+        
+        // Si aún está vacío, intentar desde REQUEST_URI
+        if (empty($finalQueryString)) {
+            $requestUri = $request->server('REQUEST_URI') ?? '';
+            if (strpos($requestUri, '?') !== false) {
+                $finalQueryString = substr($requestUri, strpos($requestUri, '?') + 1);
+            }
+        }
+        
+        Log::channel('device_receiver')->info('Query String RAW: ' . $finalQueryString);
+        
+        // IMPORTANTE: Decodificar URL encoding (navegadores lo encodean automáticamente)
+        $finalQueryString = urldecode($finalQueryString);
+        
+        Log::channel('device_receiver')->info('Query String decoded: ' . $finalQueryString);
         
         // Validar que no esté vacío
-        if (empty($queryString)) {
-            Log::channel('device_receiver')->warning('Query string vacío');
+        if (empty($finalQueryString)) {
+            Log::channel('device_receiver')->warning('Query string vacío en todos los métodos');
             return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
         }
         
-        Log::channel('device_receiver')->info('Query string recibido, longitud: ' . strlen($queryString));
+        Log::channel('device_receiver')->info('Query string procesada correctamente, longitud: ' . strlen($finalQueryString));
         
-        // Separar por @ para múltiples registros
-        $array = explode('@', $queryString);
+        // Separar por @ para múltiples registros - IGUAL QUE EL ORIGINAL
+        $array = explode('@', $finalQueryString);
         $fallo = false;
         
         // No usar transacciones para replicar el comportamiento original
