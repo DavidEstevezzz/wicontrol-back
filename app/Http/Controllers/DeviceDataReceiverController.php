@@ -37,8 +37,11 @@ class DeviceDataReceiverController extends Controller
         
         // Validar que no esté vacío
         if (empty($finalQueryString)) {
-            Log::channel('device_receiver')->warning('Query string vacío en ambos métodos');
+            Log::channel('device_receiver')->warning('Query string vacío en todos los métodos');
+            Log::channel('device_receiver')->info('$_GET: ' . json_encode($_GET));
+            Log::channel('device_receiver')->info('$_POST: ' . json_encode($_POST));
             Log::channel('device_receiver')->info('Raw input: ' . file_get_contents('php://input'));
+            Log::channel('device_receiver')->info('HTTP method: ' . $request->method());
             return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
         }
         
