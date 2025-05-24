@@ -259,27 +259,32 @@ class CalibrationController extends Controller
      * Obtiene el estado de calibración para el front-end
      */
     public function getStep(Request $request)
-    {
-        $data = $request->validate([
-            'device' => 'required|string', // Cambiar a string porque ahora es numero_serie
-        ]);
+{
+    $data = $request->validate([
+        'device' => 'required|string',
+    ]);
 
-        // Buscar por numero_serie como el PHP original
-        $disp = Dispositivo::where('numero_serie', $data['device'])->first();
-
-        if (! $disp) {
-            return response()->json([
-                'success' => false,
-                'messages' => 'Device not found'
-            ], 404);
-        }
-
-        // Devolver como array para mantener compatibilidad con PHP original
+    $disp = Dispositivo::where('numero_serie', $data['device'])->first();
+    if (! $disp) {
         return response()->json([
-            'success' => true,
-            'messages' => json_encode([$disp->toArray()])
-        ]);
+            'success' => false,
+            'messages' => 'Device not found'
+        ], 404);
     }
+
+    // Convertimos a array y forzamos los tipos correctos
+    $arr = $disp->toArray();
+    $arr['calibrado']      = (int) $disp->calibrado;
+    $arr['runCalibracion'] = (int) $disp->runCalibracion;
+    $arr['errorCalib']     = (int) $disp->errorCalib;
+    $arr['pesoCalibracion']= (float) $disp->pesoCalibracion;
+
+    return response()->json([
+        'success' => true,
+        'messages' => json_encode([$arr]),
+    ]);
+}
+
 
     /**
      * Recibe desde la UI el peso marcado por el usuario
