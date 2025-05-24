@@ -15,24 +15,24 @@ class CalibrationController extends Controller
     public function calibrate(Request $request)
     {
         $log = Log::channel('calibration');
-        
+
         // Log para confirmar que el método se ejecuta
         $log->info('=== MÉTODO CALIBRATE EJECUTADO ===');
-        
+
         // Configurar timezone
         config(['app.timezone' => 'Europe/Paris']);
-        
+
         // Debugging completo de la petición
         $log->info('Nuevo Get: ' . Carbon::now('Europe/Paris')->format('Y-m-d H:i:s'));
-        
+
         // Obtener la query string como en el PHP original - EXACTAMENTE IGUAL
         $finalQueryString = $_SERVER['QUERY_STRING'] ?? '';
-        
+
         // Si está vacío, intentar otros métodos
         if (empty($finalQueryString)) {
             $finalQueryString = $request->getQueryString() ?? '';
         }
-        
+
         // Si aún está vacío, intentar desde REQUEST_URI
         if (empty($finalQueryString)) {
             $requestUri = $request->server('REQUEST_URI') ?? '';
@@ -40,12 +40,12 @@ class CalibrationController extends Controller
                 $finalQueryString = substr($requestUri, strpos($requestUri, '?') + 1);
             }
         }
-        
+
         $log->info('Query String RAW: ' . $finalQueryString);
-        
+
         // IMPORTANTE: Decodificar URL encoding (navegadores lo encodean automáticamente)
         $finalQueryString = urldecode($finalQueryString);
-        
+
         $log->info('Query String decoded: ' . $finalQueryString);
 
         // Validar JSON crudo
@@ -54,7 +54,7 @@ class CalibrationController extends Controller
             return response('@ERROR@', 400)
                 ->header('Content-Type', 'text/plain');
         }
-        
+
         $log->info('Query string procesada correctamente, longitud: ' . strlen($finalQueryString));
 
         // Decodificar parámetros
@@ -129,7 +129,7 @@ class CalibrationController extends Controller
                     if ($updated) {
                         // Recargar el modelo para obtener valores actualizados
                         $disp->refresh();
-                        
+
                         if ($disp->pesoCalibracion != 0) {
                             $out = ['dev' => $dev, 'ste' => 3, 'val' => $disp->pesoCalibracion, 'abo' => 0];
                             $log->info("Step 2: Transiciona al paso 3 calibracion con peso " . json_encode($out));
@@ -171,10 +171,10 @@ class CalibrationController extends Controller
                         ]);
                         if ($updated) {
                             $log->info("Step 4: Calibracion con peso OK!");
-                            
+
                             // Recargar el modelo para obtener valores actualizados
                             $disp->refresh();
-                            
+
                             if ($disp->pesoCalibracion == 0) {
                                 $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 0];
                                 $log->info("Step 4: Transiciona al paso 5 quitar peso " . json_encode($out));
@@ -249,23 +249,28 @@ class CalibrationController extends Controller
     /**
      * Obtiene el estado de calibración para el front-end
      */
+    /**
+     * Obtiene el estado de calibración para el front-end
+     */
     public function getStep(Request $request)
     {
         $data = $request->validate([
-            'device' => 'required|integer',
+            'device' => 'required|string', // Cambiar a string porque ahora es numero_serie
         ]);
-        
-        $disp = Dispositivo::find($data['device']);
+
+        // Buscar por numero_serie como el PHP original
+        $disp = Dispositivo::where('numero_serie', $data['device'])->first();
+
         if (! $disp) {
             return response()->json([
-                'success' => false, 
+                'success' => false,
                 'messages' => 'Device not found'
             ], 404);
         }
-        
+
         // Devolver como array para mantener compatibilidad con PHP original
         return response()->json([
-            'success' => true, 
+            'success' => true,
             'messages' => json_encode([$disp->toArray()])
         ]);
     }
@@ -276,19 +281,21 @@ class CalibrationController extends Controller
     public function sendStep(Request $request)
     {
         $data = $request->validate([
-            'device' => 'required|integer',
+            'device' => 'required|string', // Cambiar a string
             'weight' => 'required|numeric',
             'step'   => 'required|integer',
         ]);
-        
-        $disp = Dispositivo::find($data['device']);
+
+        // Buscar por numero_serie como el PHP original
+        $disp = Dispositivo::where('numero_serie', $data['device'])->first();
+
         if (! $disp) {
             return response()->json([
-                'success' => false, 
+                'success' => false,
                 'messages' => 'Device not found'
             ], 404);
         }
-        
+
         // Lógica exacta del PHP original
         if ($data['weight'] == 0) {
             $disp->update([
@@ -300,11 +307,11 @@ class CalibrationController extends Controller
             ]);
         } else {
             $disp->update([
-                'pesoCalibracion' => $data['weight'], 
+                'pesoCalibracion' => $data['weight'],
                 'runCalibracion'  => 1
             ]);
         }
-        
+
         if ($data['step'] == 5) {
             $disp->update([
                 'pesoCalibracion' => 0,
@@ -312,9 +319,9 @@ class CalibrationController extends Controller
                 'runCalibracion'  => 0,
             ]);
         }
-        
+
         return response()->json([
-            'success' => true, 
+            'success' => true,
             'messages' => 'actualizada Ok.'
         ]);
     }
