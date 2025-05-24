@@ -76,6 +76,7 @@ Route::get('dispositivos/{dispId}/temperatura-cama-grafica-alertas', [CamadaCont
 
 Route::get('/configure.php', [DeviceConfigurationController::class, 'configure']);
 Route::get('/receive.php', [DeviceDataReceiverController::class, 'receive']);
+Route::get('/Receive.php', [DeviceDataReceiverController::class, 'receive']);
 Route::get('calibrate',           [CalibrationController::class,'calibrate']);
 Route::post('calibrate/get-step', [CalibrationController::class,'getStep']);
 Route::post('calibrate/send-step',[CalibrationController::class,'sendStep']);
