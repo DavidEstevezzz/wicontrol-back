@@ -45,7 +45,7 @@ class DeviceDataReceiverController extends Controller
             return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
         }
         
-        Log::channel('device_receiver')->info('Query string final usado, longitud: ' . strlen($finalQueryString));
+        Log::channel('device_receiver')->info('Query string procesada correctamente, longitud: ' . strlen($finalQueryString));
         
         // Separar por @ para múltiples registros
         $array = explode('@', $finalQueryString);
