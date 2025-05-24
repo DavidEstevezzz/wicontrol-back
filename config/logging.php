@@ -85,6 +85,11 @@ return [
             'path'   => storage_path('logs/calibration.log'),
             'level'  => 'debug',
         ],
+        'heartbeat' => [
+        'driver' => 'single',
+        'path'   => storage_path('logs/heartbeat.log'),
+        'level'  => 'info',
+    ],
 
         'daily' => [
             'driver' => 'daily',

@@ -20,7 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/receive.php',            // Ruta API moderna
             'calibrate',
             'api/calibrate',              // Ruta API moderna
-            
+            'heartbeat.php',
+            'api/heartbeat.php',          // Ruta API moderna
+
             // Versiones con mayúscula (para compatibilidad)
             'Configure.php',              // Configuración de dispositivos
             'Receive.php',                // Recepción de datos
@@ -28,6 +30,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/Receive.php',            // Ruta API moderna
             'Calibrate',
             'api/Calibrate',              // Ruta API moderna
+            'Heartbeat.php',
+            'api/Heartbeat.php',          // Ruta API moderna
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
