@@ -131,6 +131,7 @@ class CalibrationController extends Controller
                         'calibrado'      => 2,
                         'runCalibracion' => 0,
                         'errorCalib'     => 0,
+                        'pesoCalibracion'   => $val,
                     ]);
                     if ($updated) {
                         // Recargar el modelo para obtener valores actualizados
