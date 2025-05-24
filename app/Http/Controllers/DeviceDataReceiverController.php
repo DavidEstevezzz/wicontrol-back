@@ -28,23 +28,26 @@ class DeviceDataReceiverController extends Controller
         // Configurar timezone
         config(['app.timezone' => 'Europe/Paris']);
 
-        // Obtener la query string completa
-        $raw = $request->server('QUERY_STRING', '');
-        // o incluso directamente:
-        // $raw = $_SERVER['QUERY_STRING'] ?? '';
+        $uri = $request->server('REQUEST_URI', '');
+    Log::channel('device_receiver')->info('REQUEST_URI raw: '.$uri);
 
-        Log::channel('device_receiver')->info('Raw QUERY_STRING: ' . $raw);
+    // 2. Separamos lo que viene tras el '?'
+    if (false === strpos($uri, '?')) {
+        Log::channel('device_receiver')->warning('No hay "?" en REQUEST_URI');
+        return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
+    }
+    // todo lo que hay después del '?'
+    $raw = substr($uri, strpos($uri, '?') + 1);
 
-        if (empty($raw)) {
-            Log::channel('device_receiver')->warning('Sin datos en QUERY_STRING');
-            return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
-        }
+    Log::channel('device_receiver')->info('Raw payload: '.$raw);
 
-        Log::channel('device_receiver')->info('Longitud de raw: ' . strlen($raw));
+    if (strlen(trim($raw)) === 0) {
+        Log::channel('device_receiver')->warning('Payload vacío tras el "?"');
+        return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
+    }
 
-        // Y luego procesas exactamente igual:
-        $array = explode('@', $raw);
-
+    // 3. Procesas igual que antes
+    $array = explode('@', $raw);
         // No usar transacciones para replicar el comportamiento original
         try {
             foreach ($array as $valor) {
