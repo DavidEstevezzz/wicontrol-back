@@ -36,15 +36,16 @@ class DeviceDataReceiverController extends Controller
         Log::channel('device_receiver')->info('Query String: ' . $queryString);
         
         // Validar que no esté vacío
-        if (empty($queryString)) {
-            Log::channel('device_receiver')->warning('Query string vacío');
+        if (empty($finalQueryString)) {
+            Log::channel('device_receiver')->warning('Query string vacío en ambos métodos');
+            Log::channel('device_receiver')->info('Raw input: ' . file_get_contents('php://input'));
             return response('@ERROR@', 400)->header('Content-Type', 'text/plain');
         }
         
-        Log::channel('device_receiver')->info('Query string recibido, longitud: ' . strlen($queryString));
+        Log::channel('device_receiver')->info('Query string final usado, longitud: ' . strlen($finalQueryString));
         
         // Separar por @ para múltiples registros
-        $array = explode('@', $queryString);
+        $array = explode('@', $finalQueryString);
         $fallo = false;
         
         // No usar transacciones para replicar el comportamiento original
