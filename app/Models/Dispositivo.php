@@ -55,7 +55,7 @@ class Dispositivo extends Model
     protected $casts = [
         'id_instalacion'            => 'integer',
         'alta'                      => 'boolean',
-        'calibrado'                 => 'boolean',
+        'calibrado'                 => 'integer',
         'runCalibracion'            => 'boolean',
         'count'                     => 'integer',
         'sensorMovimiento'          => 'integer',

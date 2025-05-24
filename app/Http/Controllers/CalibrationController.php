@@ -113,17 +113,10 @@ class CalibrationController extends Controller
                     ->header('Content-Type', 'text/plain');
 
             case 1:
+                // Calibración peso muerto ok/nok
                 if ($err == 0) {
-                    // marca ya el segundo paso
-                    $disp->update([
-                        'calibrado'      => 2,
-                        'runCalibracion' => 0,
-                        'errorCalib'     => 0,
-                    ]);
-                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 0];
-                    $log->info("Step 1 → 2 automático: " . json_encode($out));
-                    return response('@' . json_encode($out) . '@', 200)
-                        ->header('Content-Type', 'text/plain');
+                    // esperando a calibrarse con peso
+                    $log->info("Step 1: {$dev} Calibrandose sin peso, espere...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
                     $log->error("Step 1: {$dev} Error calibrando sin peso, calibracion abortada, error: {$err}");
@@ -266,31 +259,31 @@ class CalibrationController extends Controller
      * Obtiene el estado de calibración para el front-end
      */
     public function getStep(Request $request)
-    {
-        $data = $request->validate([
-            'device' => 'required|string',
-        ]);
+{
+    $data = $request->validate([
+        'device' => 'required|string',
+    ]);
 
-        $disp = Dispositivo::where('numero_serie', $data['device'])->first();
-        if (! $disp) {
-            return response()->json([
-                'success' => false,
-                'messages' => 'Device not found'
-            ], 404);
-        }
-
-        // Convertimos a array y forzamos los tipos correctos
-        $arr = $disp->toArray();
-        $arr['calibrado']      = (int) $disp->calibrado;
-        $arr['runCalibracion'] = (int) $disp->runCalibracion;
-        $arr['errorCalib']     = (int) $disp->errorCalib;
-        $arr['pesoCalibracion'] = (float) $disp->pesoCalibracion;
-
+    $disp = Dispositivo::where('numero_serie', $data['device'])->first();
+    if (! $disp) {
         return response()->json([
-            'success' => true,
-            'messages' => json_encode([$arr]),
-        ]);
+            'success' => false,
+            'messages' => 'Device not found'
+        ], 404);
     }
+
+    // Convertimos a array y forzamos los tipos correctos
+    $arr = $disp->toArray();
+    $arr['calibrado']      = (int) $disp->calibrado;
+    $arr['runCalibracion'] = (int) $disp->runCalibracion;
+    $arr['errorCalib']     = (int) $disp->errorCalib;
+    $arr['pesoCalibracion']= (float) $disp->pesoCalibracion;
+
+    return response()->json([
+        'success' => true,
+        'messages' => json_encode([$arr]),
+    ]);
+}
 
 
     /**
