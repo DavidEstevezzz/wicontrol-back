@@ -81,8 +81,9 @@ Route::get('/Receive.php', [DeviceDataReceiverController::class, 'receive']);
 Route::get('calibrate',           [CalibrationController::class,'calibrate']);
 Route::post('calibrate/get-step', [CalibrationController::class,'getStep']);
 Route::post('calibrate/send-step',[CalibrationController::class,'sendStep']);
-Route::get('/heartbeat.php', [HeartbeatController::class, 'heartbeat'])
-     ->name('device.heartbeat.legacy');
+Route::get('/heartbeat.php', [HeartbeatController::class, 'heartbeat']);
+Route::get('/Heartbeat.php', [HeartbeatController::class, 'heartbeat']);
+
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
