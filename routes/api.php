@@ -118,6 +118,7 @@ Route::post('peso-ross/rango', [PesoRossController::class, 'getPesosByRangoEdad'
 
 Route::apiResource('usuarios',        UsuarioController::class);
 Route::patch('usuarios/{usuario}/activate', [UsuarioController::class, 'activate']);
+Route::get('/usuarios/{usuario}/empresas', [UsuarioController::class, 'getEmpresas']);
 
 Route::get('/dashboard', [DashboardController::class, 'stats']);
 Route::get('/granjas/{numeroRega}/dashboard', [GranjaController::class, 'dashboard']);

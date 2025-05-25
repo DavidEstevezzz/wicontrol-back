@@ -135,4 +135,15 @@ class UsuarioController extends Controller
         'usuario' => $usuario
     ]);
 }
+
+/**
+ * Obtener empresas asignadas a un usuario.
+ */
+public function getEmpresas(Usuario $usuario)
+{
+    $usuario->load('empresas');
+    return response()->json([
+        'empresas' => $usuario->empresas
+    ]);
+}
 }
