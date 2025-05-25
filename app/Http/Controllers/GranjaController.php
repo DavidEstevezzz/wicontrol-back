@@ -167,8 +167,8 @@ class GranjaController extends Controller
 public function getByEmpresa(int $empresa): JsonResponse
     {
         $granjas = Granja::where('empresa_id', $empresa)
-                    ->orderBy('nombre')
-                    ->get(['id', 'nombre', 'numero_rega']);
+                    ->orderBy('nombre');
+                    
 
         return response()->json($granjas, Response::HTTP_OK);
     }
