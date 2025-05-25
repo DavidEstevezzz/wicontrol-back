@@ -89,7 +89,7 @@ class CalibrationController extends Controller
             case 0:
                 try {
                     // PRIMERO verificar el valor actual ANTES de actualizar
-                    $runCalibrationOriginal = $disp->runCalibracion;
+                    $pesoCalib = $disp->pesoCalibracion;
 
                     // LUEGO actualizar
                     $updated = $disp->update([
@@ -100,11 +100,12 @@ class CalibrationController extends Controller
 
                     if ($updated) {
                         // Usar el valor ORIGINAL, no el actualizado
-                        if ($runCalibrationOriginal == 1) {
-                            $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 0];
+                        if ($pesoCalib != -1) {
+                            $abo = 0;
                         } else {
-                            $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
+                            $abo = 1;
                         }
+                        $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => $abo];
                     } else {
                         $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
                         $log->error("Step 0 update failed for {$dev}");
@@ -119,113 +120,147 @@ class CalibrationController extends Controller
 
             case 1:
                 if ($err == 0) {
-                    $disp->update(['calibrado' => 1]);
-                    $log->info("Step 1: {$dev} calibrándose sin peso, avance a paso 2");
-                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 0];
+                    // Igual que en el PHP original: solo loguea, no devuelvas JSON
+                    $log->info("Step 1: {$dev} calibrándose sin peso, siga esperando...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 1 error calibrando sin peso: {$err}");
-                    $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
+                    $log->error("Step 1: error calibrando sin peso (err={$err})");
                 }
-                $log->info("Step 1 output: " . json_encode($out));
-                return response('@' . json_encode($out) . '@', 200)
+                // Devuelve un 200 OK sin cuerpo para que Arduino siga esperando
+                return response('', 200)
                     ->header('Content-Type', 'text/plain');
 
             case 2:
-                // Esperando calibración con peso ok
                 try {
+                    // 1) Guarda el peso que ya existe en la BD
+                    $peso = $disp->pesoCalibracion;
+
+                    // 2) Actualiza sólo calibrado, runCalibracion y errorCalib
                     $updated = $disp->update([
                         'calibrado'      => 2,
                         'runCalibracion' => 0,
                         'errorCalib'     => 0,
-                        'pesoCalibracion'   => $val,
                     ]);
+
                     if ($updated) {
-                        // Recargar el modelo para obtener valores actualizados
+                        // 3) Recarga el modelo para asegurarte de leer el peso original
                         $disp->refresh();
 
-                        if ($disp->pesoCalibracion != 0) {
-                            $out = ['dev' => $dev, 'ste' => 3, 'val' => $disp->pesoCalibracion, 'abo' => 0];
-                            $log->info("Step 2: Transiciona al paso 3 calibracion con peso " . json_encode($out));
+                        if ($peso != 0) {
+                            $out = [
+                                'dev' => $dev,
+                                'ste' => 3,
+                                'val' => $peso,
+                                'abo' => 0,
+                            ];
+                            $log->info("Step 2: paso a 3 con peso de calibración {$peso}");
                         } else {
-                            $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 0];
-                            $log->info("Step 2: {$dev} Esperando al usuario en la web a añadir el peso...");
+                            $out = [
+                                'dev' => $dev,
+                                'ste' => 2,
+                                'val' => 0,
+                                'abo' => 0,
+                            ];
+                            $log->info("Step 2: {$dev} esperando que el usuario defina el peso en web");
                         }
                     } else {
-                        $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
-                        $log->error("Step 2 update failed for {$dev}");
+                        $out = [
+                            'dev' => $dev,
+                            'ste' => 2,
+                            'val' => 0,
+                            'abo' => 1,
+                        ];
+                        $log->error("Step 2: fallo al actualizar calibrado para {$dev}");
                     }
                 } catch (\Exception $e) {
-                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
-                    $log->error("Exception in step 2 for {$dev}: " . $e->getMessage());
+                    $out = [
+                        'dev' => $dev,
+                        'ste' => 2,
+                        'val' => 0,
+                        'abo' => 1,
+                    ];
+                    $log->error("Exception en step 2 para {$dev}: " . $e->getMessage());
                 }
+
                 return response('@' . json_encode($out) . '@', 200)
                     ->header('Content-Type', 'text/plain');
+
 
             case 3:
                 if ($err == 0) {
-                    $disp->update(['calibrado' => 3]);
-                    $log->info("Step 3: {$dev} calibrándose con peso, avance a paso 4");
-                    $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 0];
+                    $log->info("Step 3: {$dev} calibrándose con peso, siga esperando...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 3 error calibrando con peso: {$err}");
-                    $out = ['dev' => $dev, 'ste' => 3, 'val' => 0, 'abo' => 1];
+                    $log->error("Step 3: error calibrando con peso (err={$err})");
                 }
-                $log->info("Step 3 output: " . json_encode($out));
-                return response('@' . json_encode($out) . '@', 200)
+                // 200 OK vacío
+                return response('', 200)
                     ->header('Content-Type', 'text/plain');
 
             case 4:
-                // Calibración con peso OK/NOK
+                // 1) Sólo lee el peso original, antes de cualquier update
+                $pesoOriginal = $disp->pesoCalibracion;
+
                 if ($err == 0) {
-                    try {
-                        $updated = $disp->update([
-                            'calibrado'      => 4,
-                            'runCalibracion' => 0,
-                            'errorCalib'     => 0,
-                        ]);
-                        if ($updated) {
-                            $log->info("Step 4: Calibracion con peso OK!");
+                    // 2) Actualiza estado igual que el PHP puro
+                    $disp->update([
+                        'calibrado'      => 4,
+                        'runCalibracion' => 0,
+                        'errorCalib'     => 0,
+                    ]);
 
-                            // Recargar el modelo para obtener valores actualizados
-                            $disp->refresh();
+                    // 3) Recarga para estar seguros (aunque no cambiamos pesoCalibracion)
+                    $disp->refresh();
 
-                            if ($disp->pesoCalibracion == 0) {
-                                $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 0];
-                                $log->info("Step 4: Transiciona al paso 5 quitar peso " . json_encode($out));
-                            } else {
-                                $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 0];
-                                $log->info("Step 4: {$dev} Esperando al usuario en la web a quitar el peso...");
-                            }
-                        } else {
-                            $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
-                            $log->error("Step 4 update failed for {$dev}");
-                        }
-                    } catch (\Exception $e) {
-                        $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
-                        $log->error("Exception in step 4 for {$dev}: " . $e->getMessage());
+                    // 4) Decide el siguiente paso según el peso que tenía el dispositivo
+                    if ($pesoOriginal == 0) {
+                        // Si peso era 0, salta directamente al paso 5
+                        $out = [
+                            'dev' => $dev,
+                            'ste' => 5,
+                            'val' => 0,
+                            'abo' => 0,
+                        ];
+                        $log->info("Step 4 → 5 (no había peso): " . json_encode($out));
+                    } else {
+                        // Si peso > 0, espera que el usuario retire el peso
+                        $out = [
+                            'dev' => $dev,
+                            'ste' => 4,
+                            'val' => 0,
+                            'abo' => 0,
+                        ];
+                        $log->info("Step 4: esperando que usuario retire peso: " . json_encode($out));
                     }
                 } else {
+                    // 5) Si hay error, lo guardas y abortas
                     $disp->update(['errorCalib' => $err]);
-                    $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
-                    $log->error("Step 4: {$dev} Error calibrando con peso, aborting, code: {$err}");
+                    $out = [
+                        'dev' => $dev,
+                        'ste' => 4,
+                        'val' => 0,
+                        'abo' => 1,
+                    ];
+                    $log->error("Step 4 error calibrando con peso ({$err}), abortando: " . json_encode($out));
                 }
+
+                // 6) Devuelve la respuesta siempre envuelta en @…@
                 return response('@' . json_encode($out) . '@', 200)
                     ->header('Content-Type', 'text/plain');
 
+
             case 5:
-                if ($err == 0) {
-                    $disp->update(['calibrado' => 5]);
-                    $log->info("Step 5: {$dev} peso quitado, avanzando a 6");
-                    $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 0];
+                if ($err === 0) {
+                    // Igual que en el original, solo registro en log:
+                    $log->info("Step 5: {$dev} Esperando a quitar peso, siga llamando hasta que el usuario quite el peso en la UI.");
                 } else {
+                    // Si hay error, sí actualizamos errorCalib
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 5: {$dev} Error quitando peso: {$err}");
-                    $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 1];
+                    $log->error("Step 5: {$dev} Error esperando quitar peso (err={$err}).");
                 }
-                $log->info("Step 5 output: " . json_encode($out));
-                return response('@' . json_encode($out) . '@', 200)
+                // NO devolvemos JSON con @…@: retornamos un 200 OK vacío
+                // para que el Arduino siga en el mismo paso 5
+                return response('', 200)
                     ->header('Content-Type', 'text/plain');
 
             case 6:
