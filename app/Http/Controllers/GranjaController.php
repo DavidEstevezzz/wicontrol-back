@@ -168,7 +168,7 @@ public function getByEmpresa(int $empresa): JsonResponse
     {
         $granjas = Granja::where('empresa_id', $empresa)
                     ->orderBy('nombre')
-                    ->get(['id', 'nombre', 'numero_rega', 'repomnsable', 'usuario_contacto', 'ganadero']);
+                    ->get(['id', 'nombre', 'numero_rega', 'responsable', 'usuario_contacto', 'ganadero']);
 
         return response()->json($granjas, Response::HTTP_OK);
     }
