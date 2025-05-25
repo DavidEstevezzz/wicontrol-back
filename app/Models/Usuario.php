@@ -49,11 +49,15 @@ class Usuario extends Authenticatable
         $this->attributes['contrasena'] = bcrypt($value);
     }
 
-    // Relación con Empresa
-    public function empresa()
-    {
-        return $this->belongsTo(Empresa::class, 'empresa_id');
-    }
+    public function empresas(): BelongsToMany
+{
+    return $this->belongsToMany(
+        Empresa::class,                     // Modelo relacionado
+        'tb_relacion_usuario_empresa',      // Tabla pivot
+        'id_usuario',                       // FK en pivot hacia este modelo
+        'id_empresa'                        // FK en pivot hacia el modelo Empresa
+    );
+}
 
     // (Opcional) Cambiar nombre de campo para autenticación
     public function getAuthPassword()

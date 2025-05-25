@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Empresa extends Model
 {
@@ -46,13 +47,15 @@ class Empresa extends Model
         'codigo_postal'    => 'integer',
     ];
 
-    /**
-     * Usuarios pertenecientes a esta empresa.
-     */
-    public function usuarios(): HasMany
-    {
-        return $this->hasMany(Usuario::class, 'empresa_id');
-    }
+    public function usuarios(): BelongsToMany
+{
+    return $this->belongsToMany(
+        Usuario::class,
+        'tb_relacion_usuario_empresa',
+        'id_empresa',
+        'id_usuario'
+    );
+}
 
     /**
      * Usuario de contacto (si aplica).
