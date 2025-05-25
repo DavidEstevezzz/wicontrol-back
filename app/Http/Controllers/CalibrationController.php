@@ -87,15 +87,20 @@ class CalibrationController extends Controller
         switch ($step) {
 
             case 0:
-                // ready para calibrar peso muerto
                 try {
+                    // PRIMERO verificar el valor actual ANTES de actualizar
+                    $runCalibrationOriginal = $disp->runCalibracion;
+
+                    // LUEGO actualizar
                     $updated = $disp->update([
                         'calibrado'      => 1,
                         'runCalibracion' => 0,
                         'errorCalib'     => 0,
                     ]);
+
                     if ($updated) {
-                        if ($disp->pesoCalibracion != -1) {
+                        // Usar el valor ORIGINAL, no el actualizado
+                        if ($runCalibrationOriginal == 1) {
                             $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 0];
                         } else {
                             $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
@@ -113,15 +118,13 @@ class CalibrationController extends Controller
                     ->header('Content-Type', 'text/plain');
 
             case 1:
-                // Calibración peso muerto ok/nok
                 if ($err == 0) {
-                    // esperando a calibrarse con peso
+                    $disp->update(['calibrado' => 1]);
                     $log->info("Step 1: {$dev} Calibrandose sin peso, espere...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
                     $log->error("Step 1: {$dev} Error calibrando sin peso, calibracion abortada, error: {$err}");
                 }
-                // No response, solo log
                 return response()->noContent();
 
             case 2:
@@ -156,15 +159,13 @@ class CalibrationController extends Controller
                     ->header('Content-Type', 'text/plain');
 
             case 3:
-                // Esperando calibración con peso
                 if ($err == 0) {
-                    // esperando a calibrarse con peso
+                    $disp->update(['calibrado' => 3]);
                     $log->info("Step 3: {$dev} Calibrandose con peso, espere...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
                     $log->error("Step 3: {$dev} Error calibrando con peso, calibracion abortada, error: {$err}");
                 }
-                // No response, solo log
                 return response()->noContent();
 
             case 4:
@@ -199,22 +200,20 @@ class CalibrationController extends Controller
                     }
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
+                    $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
                     $log->error("Step 4: {$dev} Error calibrando con peso, aborting, code: {$err}");
                 }
                 return response('@' . json_encode($out) . '@', 200)
                     ->header('Content-Type', 'text/plain');
 
             case 5:
-                // Volver a peso muerto por parte del usuario
                 if ($err == 0) {
-                    // esperando a quitar peso
+                    $disp->update(['calibrado' => 5]);
                     $log->info("Step 5: {$dev} Esperando a quitar peso, espere...");
                 } else {
                     $disp->update(['errorCalib' => $err]);
                     $log->error("Step 5: {$dev} Error esperando a quitar peso, calibracion abortada, error: {$err}");
                 }
-                // No response, solo log
                 return response()->noContent();
 
             case 6:
@@ -239,7 +238,7 @@ class CalibrationController extends Controller
                     }
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 1];
+                    $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 1];
                     $log->error("Step 6: {$dev} Error finalizando calibracion, code: {$err}");
                 }
                 return response('@' . json_encode($out) . '@', 200)
@@ -260,31 +259,31 @@ class CalibrationController extends Controller
      * Obtiene el estado de calibración para el front-end
      */
     public function getStep(Request $request)
-{
-    $data = $request->validate([
-        'device' => 'required|string',
-    ]);
+    {
+        $data = $request->validate([
+            'device' => 'required|string',
+        ]);
 
-    $disp = Dispositivo::where('numero_serie', $data['device'])->first();
-    if (! $disp) {
+        $disp = Dispositivo::where('numero_serie', $data['device'])->first();
+        if (! $disp) {
+            return response()->json([
+                'success' => false,
+                'messages' => 'Device not found'
+            ], 404);
+        }
+
+        // Convertimos a array y forzamos los tipos correctos
+        $arr = $disp->toArray();
+        $arr['calibrado']      = (int) $disp->calibrado;
+        $arr['runCalibracion'] = (int) $disp->runCalibracion;
+        $arr['errorCalib']     = (int) $disp->errorCalib;
+        $arr['pesoCalibracion'] = (float) $disp->pesoCalibracion;
+
         return response()->json([
-            'success' => false,
-            'messages' => 'Device not found'
-        ], 404);
+            'success' => true,
+            'messages' => json_encode([$arr]),
+        ]);
     }
-
-    // Convertimos a array y forzamos los tipos correctos
-    $arr = $disp->toArray();
-    $arr['calibrado']      = (int) $disp->calibrado;
-    $arr['runCalibracion'] = (int) $disp->runCalibracion;
-    $arr['errorCalib']     = (int) $disp->errorCalib;
-    $arr['pesoCalibracion']= (float) $disp->pesoCalibracion;
-
-    return response()->json([
-        'success' => true,
-        'messages' => json_encode([$arr]),
-    ]);
-}
 
 
     /**
@@ -309,7 +308,13 @@ class CalibrationController extends Controller
         }
 
         // Lógica exacta del PHP original
-        if ($data['weight'] == 0) {
+        if ($data['step'] == 5) {
+            $disp->update([
+                'pesoCalibracion' => 0,
+                'calibrado'       => 5,
+                'runCalibracion'  => 0,
+            ]);
+        } elseif ($data['weight'] == 0) {
             $disp->update([
                 'pesoCalibracion'          => 0,
                 'calibrado'                => 0,
@@ -321,14 +326,6 @@ class CalibrationController extends Controller
             $disp->update([
                 'pesoCalibracion' => $data['weight'],
                 'runCalibracion'  => 1
-            ]);
-        }
-
-        if ($data['step'] == 5) {
-            $disp->update([
-                'pesoCalibracion' => 0,
-                'calibrado'       => 5,
-                'runCalibracion'  => 0,
             ]);
         }
 
