@@ -120,12 +120,16 @@ class CalibrationController extends Controller
             case 1:
                 if ($err == 0) {
                     $disp->update(['calibrado' => 1]);
-                    $log->info("Step 1: {$dev} Calibrandose sin peso, espere...");
+                    $log->info("Step 1: {$dev} calibrándose sin peso, avance a paso 2");
+                    $out = ['dev' => $dev, 'ste' => 2, 'val' => 0, 'abo' => 0];
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 1: {$dev} Error calibrando sin peso, calibracion abortada, error: {$err}");
+                    $log->error("Step 1 error calibrando sin peso: {$err}");
+                    $out = ['dev' => $dev, 'ste' => 1, 'val' => 0, 'abo' => 1];
                 }
-                return response()->noContent();
+                $log->info("Step 1 output: " . json_encode($out));
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 2:
                 // Esperando calibración con peso ok
@@ -161,12 +165,16 @@ class CalibrationController extends Controller
             case 3:
                 if ($err == 0) {
                     $disp->update(['calibrado' => 3]);
-                    $log->info("Step 3: {$dev} Calibrandose con peso, espere...");
+                    $log->info("Step 3: {$dev} calibrándose con peso, avance a paso 4");
+                    $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 0];
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 3: {$dev} Error calibrando con peso, calibracion abortada, error: {$err}");
+                    $log->error("Step 3 error calibrando con peso: {$err}");
+                    $out = ['dev' => $dev, 'ste' => 3, 'val' => 0, 'abo' => 1];
                 }
-                return response()->noContent();
+                $log->info("Step 3 output: " . json_encode($out));
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 4:
                 // Calibración con peso OK/NOK
@@ -209,12 +217,16 @@ class CalibrationController extends Controller
             case 5:
                 if ($err == 0) {
                     $disp->update(['calibrado' => 5]);
-                    $log->info("Step 5: {$dev} Esperando a quitar peso, espere...");
+                    $log->info("Step 5: {$dev} peso quitado, avanzando a 6");
+                    $out = ['dev' => $dev, 'ste' => 6, 'val' => 0, 'abo' => 0];
                 } else {
                     $disp->update(['errorCalib' => $err]);
-                    $log->error("Step 5: {$dev} Error esperando a quitar peso, calibracion abortada, error: {$err}");
+                    $log->error("Step 5: {$dev} Error quitando peso: {$err}");
+                    $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 1];
                 }
-                return response()->noContent();
+                $log->info("Step 5 output: " . json_encode($out));
+                return response('@' . json_encode($out) . '@', 200)
+                    ->header('Content-Type', 'text/plain');
 
             case 6:
                 if ($err == 0) {
