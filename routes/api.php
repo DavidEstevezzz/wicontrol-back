@@ -23,6 +23,7 @@ use App\Http\Controllers\DeviceConfigurationController;
 use App\Http\Controllers\DeviceDataReceiverController;
 use App\Http\Controllers\CalibrationController;
 use App\Http\Controllers\HeartbeatController;
+use App\Http\Controllers\DeviceLogsController;
 
 
 /*
@@ -84,6 +85,17 @@ Route::post('calibrate/send-step',[CalibrationController::class,'sendStep']);
 Route::get('/heartbeat.php', [HeartbeatController::class, 'heartbeat']);
 Route::get('/Heartbeat.php', [HeartbeatController::class, 'heartbeat']);
 
+Route::prefix('device-logs')->group(function () {
+    Route::get('/', [DeviceLogsController::class, 'index']);
+    Route::get('/latest-measurements', [DeviceLogsController::class, 'getLatestMeasurements']);
+    Route::get('/stats', [DeviceLogsController::class, 'getStats']);
+    Route::get('/recent-activity', [DeviceLogsController::class, 'getRecentActivity']);
+    Route::get('/unique-devices', [DeviceLogsController::class, 'getUniqueDevices']);
+    Route::get('/unique-sensors', [DeviceLogsController::class, 'getUniqueSensors']);
+    Route::get('/device/{deviceId}', [DeviceLogsController::class, 'getLogsByDevice']);
+    Route::get('/sensor/{sensorId}', [DeviceLogsController::class, 'getLogsBySensor']);
+    Route::get('/range', [DeviceLogsController::class, 'getLogsByTimeRange']);
+});
 
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
