@@ -274,7 +274,7 @@ class CamadaController extends Controller
         : null;
 
     // 2. Usar Eloquent solo para obtener datos básicos de camada
-    $camadaModel = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje')->findOrFail($camada);
+    $camadaModel = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe')->findOrFail($camada);
     
     // 3. Obtener seriales de dispositivos usando Query Builder
     $seriales = DB::table('tb_dispositivo as d')
@@ -527,8 +527,8 @@ class CamadaController extends Controller
     $ff = $request->query('fecha_fin');
     $coef = $request->has('coefHomogeneidad') ? (float)$request->query('coefHomogeneidad') : null;
 
-    // 2. Usar Eloquent solo para validación inicial (sin relaciones cargadas)
-    $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje')->findOrFail($camadaId);
+    // 2. AGREGAR tipo_estirpe al select
+    $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe')->findOrFail($camadaId);
     
     // Verificar que el dispositivo pertenece a la camada usando Query Builder
     $dispositivo = DB::table('tb_dispositivo as d')
@@ -679,6 +679,7 @@ class CamadaController extends Controller
 
     return response()->json($result, Response::HTTP_OK);
 }
+
 
 private function getPesosReferenciaRango(Camada $camada, int $edadMinima, int $edadMaxima): Collection
 {
