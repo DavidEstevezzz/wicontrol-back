@@ -63,6 +63,7 @@ Route::get('granjas/{codigoGranja}/dispositivos', [CamadaController::class, 'get
 //   - coefHomogeneidad=0.10 (opcional)
 Route::get('camadas/{camada}/pesadas', [CamadaController::class, 'calcularPesadasPorDia']);
 Route::get('camadas/{camada}/dispositivos/{disp}/pesadas-rango', [CamadaController::class, 'pesadasRango']);
+Route::get('dispositivos/{dispId}/pronostico-peso', [CamadaController::class, 'getPronosticoPeso']);
 Route::get('camadas/{camada}/dispositivos', [CamadaController::class, 'getDispositivosByCamada']);
 Route::get('dispositivos/{dispId}/temperatura-grafica-alertas', [CamadaController::class, 'getTemperaturaGraficaAlertas']);
 Route::get('dispositivos/{dispId}/humedad-grafica-alertas', [CamadaController::class, 'getHumedadGraficaAlertas']);
