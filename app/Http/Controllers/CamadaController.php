@@ -165,22 +165,27 @@ class CamadaController extends Controller
     }
 
     /**
- * Obtiene el peso de referencia desde la tabla tb_peso_{estirpe} (método existente mejorado)
- */
-private function getPesoReferencia(Camada $camada, int $edadDias): float
-{
-    // Obtener datos de referencia usando la nueva función
-    $datosReferencia = $this->obtenerDatosReferencia($camada);
-    
-    if (!$datosReferencia) {
-        return 0.0;
+     * Obtiene el peso de referencia desde la tabla tb_peso_{estirpe},
+     * leyendo la columna adecuada según el sexaje.
+     */
+    private function getPesoReferencia(Camada $camada, int $edadDias): float
+    {
+        $tabla = 'tb_peso_' . strtolower($camada->tipo_estirpe);
+        $sexaje = strtolower($camada->sexaje);
+
+        // Alternativa 1: if-else
+        if ($sexaje === 'macho') {
+            $col = 'Machos';
+        } elseif ($sexaje === 'hembra') {
+            $col = 'Hembras';
+        } else {
+            $col = 'Mixto';
+        }
+
+        return (float) DB::table($tabla)
+            ->where('edad', $edadDias)
+            ->value($col);
     }
-    
-    // Usar la nueva función para obtener peso por edad y sexaje
-    $peso = $this->obtenerPesoReferencia($datosReferencia, $edadDias, $camada->sexaje);
-    
-    return $peso ?? 0.0;
-}
 
     /**
      * Filtra la colección de lecturas descartando aquellas
@@ -256,110 +261,124 @@ private function getPesoReferencia(Camada $camada, int $edadDias): float
      * @return JsonResponse
      */
     public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
-    {
-        // 1. Parámetros
-        $fecha             = $request->query('fecha');
-        $coefHomogeneidad  = $request->has('coefHomogeneidad')
-            ? (float) $request->query('coefHomogeneidad')
-            : null;
+{
+    // 1. Parámetros
+    $fecha = $request->query('fecha');
+    $coefHomogeneidad = $request->has('coefHomogeneidad') 
+        ? (float)$request->query('coefHomogeneidad') 
+        : null;
 
-        // 2. Cargar camada y refs
-        $camada   = Camada::findOrFail($camada);
-        $edadDias = (int)Carbon::parse($camada->fecha_hora_inicio)->diffInDays($fecha);
+    // 2. Usar Eloquent solo para obtener datos básicos de camada
+    $camadaModel = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje')->findOrFail($camada);
+    
+    // 3. Obtener seriales de dispositivos usando Query Builder
+    $seriales = DB::table('tb_dispositivo as d')
+        ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
+        ->where('rcd.id_camada', $camada)
+        ->pluck('d.numero_serie')
+        ->filter()
+        ->unique();
 
-        $seriales = $this->getSerialesDispositivos($camada);
+    if ($seriales->isEmpty()) {
+        return response()->json(['message' => 'No hay dispositivos asociados a la camada'], 404);
+    }
 
-        // 2.a Obtener peso de referencia y loggear
-        $pesoRef = $this->getPesoReferencia($camada, $edadDias);
-        Log::info("Peso referencia Ross para camada {$camada->id_camada}: {$pesoRef} kg (edad {$edadDias} días, sexaje {$camada->sexaje})");
+    $fechaInicioCamada = $camadaModel->fecha_hora_inicio;
+    $sexaje = $camadaModel->sexaje;
 
-        // 3. Traer TODAS lecturas de peso del día
-        $lecturas = $this->fetchPesos($seriales, $fecha)
-            ->sortBy('fecha');
+    // 3. Calcular edad y peso de referencia
+    $edadDias = $fechaInicioCamada->diffInDays($fecha);
+    $pesoRef = $this->getPesoReferencia($sexaje, $edadDias);
 
-        // 4. Pre-filtrado ±20% del peso ideal y log de cada comparación
-        $consideradas = $lecturas->filter(function ($e) use ($pesoRef) {
-            $v    = (float) $e->valor;
-            $diff = abs($v - $pesoRef) / $pesoRef;
-            $ok   = $diff <= 0.20;
-            Log::info("Lectura {$e->fecha} valor={$v} kg → diffPesoIdeal=" . round($diff, 3)
-                . " → " . ($ok ? 'PASA ±20%' : 'DESCARTADA'));
-            return $ok;
-        });
+    // 4. Obtener todas las lecturas del día usando Query Builder optimizado
+    $lecturas = DB::table('tb_entrada_dato')
+        ->whereIn('id_dispositivo', $seriales)
+        ->whereDate('fecha', $fecha)
+        ->where('id_sensor', 2)
+        ->select('id_dispositivo', 'valor', 'fecha')
+        ->orderBy('fecha')
+        ->get();
 
-        // 5. Calcular media GLOBAL de las consideradas y log
-        $valores     = $consideradas->pluck('valor')->map(fn($v) => (float)$v);
-        $mediaGlobal = $valores->count()
-            ? round($valores->avg(), 2)
-            : 0;
-        Log::info("Media GLOBAL de no descartadas: {$mediaGlobal} kg");
-
-        // 5.b Calcular tramo de aceptación
-        $tramoMin = $tramoMax = null;
-        if (! is_null($coefHomogeneidad) && $mediaGlobal > 0) {
-            $tramoMin = round($mediaGlobal * (1 - $coefHomogeneidad), 2);
-            $tramoMax = round($mediaGlobal * (1 + $coefHomogeneidad), 2);
-            Log::info("Tramo homog. aceptado: {$tramoMin} kg – {$tramoMax} kg (coef={$coefHomogeneidad})");
-        }
-
-        // 6. Clasificar cada lectura y log del resultado
-        $listado = $lecturas->map(function ($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad) {
-            $v     = (float) $e->valor;
-            $fecha = $e->fecha;
-
-            // 6.1 Si sale de ±20%, es descartada
-            if (abs($v - $pesoRef) / $pesoRef > 0.20) {
-                $estado = 'descartado';
-            } else {
-                // 6.2 Si no hay coeficiente, todo lo que pasa el ±20% es aceptado
-                if (is_null($coefHomogeneidad)) {
-                    $estado = 'aceptada';
-                } else {
-                    $diffGlobal = $mediaGlobal > 0
-                        ? abs($v - $mediaGlobal) / $mediaGlobal
-                        : 0;
-                    $estado = ($diffGlobal <= $coefHomogeneidad)
-                        ? 'aceptada'
-                        : 'rechazada';
-
-                    Log::info("Lectura {$fecha} valor={$v} kg → diffGlobal=" . round($diffGlobal, 3)
-                        . " → {$estado}");
-                }
-            }
-
-            return [
-                'id_dispositivo' => $e->id_dispositivo,
-                'valor'          => $v,
-                'fecha'          => $fecha,
-                'estado'         => $estado,
-            ];
-        });
-
-        // 7. Resumen final (sin logs adicionales)
-        $totalConsideradas  = $consideradas->count();
-        $aceptadasCount     = $listado->where('estado', 'aceptada')->count();
-        $rechazadasCount    = $listado->where('estado', 'rechazada')->count();
-        $pesoMedioAceptadas = $aceptadasCount
-            ? round(
-                $listado
-                    ->where('estado', 'aceptada')
-                    ->pluck('valor')
-                    ->avg(),
-                2
-            )
-            : 0;
-
-        // 8. Devolver JSON
+    if ($lecturas->isEmpty()) {
         return response()->json([
-            'total_pesadas'            => $totalConsideradas,
-            'aceptadas'                => $aceptadasCount,
-            'rechazadas_homogeneidad'  => $rechazadasCount,
-            'peso_medio_global'        => $mediaGlobal,
-            'peso_medio_aceptadas'     => $pesoMedioAceptadas,
-            'tramo_aceptado'           => ['min' => $tramoMin, 'max' => $tramoMax],
-            'listado_pesos'            => $listado->values(),
+            'total_pesadas' => 0,
+            'aceptadas' => 0,
+            'rechazadas_homogeneidad' => 0,
+            'peso_medio_global' => 0,
+            'peso_medio_aceptadas' => 0,
+            'tramo_aceptado' => ['min' => null, 'max' => null],
+            'listado_pesos' => [],
         ], Response::HTTP_OK);
     }
+
+    // 5. Procesar lecturas - Filtrar por ±20% del peso ideal
+    $valores = $lecturas->map(fn($e) => (float)$e->valor);
+    $consideradas = $lecturas->filter(function($e) use ($pesoRef) {
+        $v = (float)$e->valor;
+        return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20;
+    });
+
+    // 6. Calcular media global
+    $mediaGlobal = $consideradas->isEmpty() ? 0 : round($consideradas->avg(fn($e) => (float)$e->valor), 2);
+
+    // 7. Calcular tramo de aceptación
+    $tramoMin = $tramoMax = null;
+    if (!is_null($coefHomogeneidad) && $mediaGlobal > 0) {
+        $tramoMin = round($mediaGlobal * (1 - $coefHomogeneidad), 2);
+        $tramoMax = round($mediaGlobal * (1 + $coefHomogeneidad), 2);
+    }
+
+    // 8. Clasificar cada lectura de una sola pasada
+    $estadisticas = ['aceptadas' => 0, 'rechazadas' => 0, 'sumaAceptadas' => 0];
+    
+    $listado = $lecturas->map(function($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad, &$estadisticas) {
+        $v = (float)$e->valor;
+        
+        // Determinar estado
+        if (abs($v - $pesoRef) / $pesoRef > 0.20) {
+            $estado = 'descartado';
+        } else {
+            if (is_null($coefHomogeneidad)) {
+                $estado = 'aceptada';
+                $estadisticas['aceptadas']++;
+                $estadisticas['sumaAceptadas'] += $v;
+            } else {
+                $diffGlobal = $mediaGlobal > 0 ? abs($v - $mediaGlobal) / $mediaGlobal : 0;
+                if ($diffGlobal <= $coefHomogeneidad) {
+                    $estado = 'aceptada';
+                    $estadisticas['aceptadas']++;
+                    $estadisticas['sumaAceptadas'] += $v;
+                } else {
+                    $estado = 'rechazada';
+                    $estadisticas['rechazadas']++;
+                }
+            }
+        }
+
+        return [
+            'id_dispositivo' => $e->id_dispositivo,
+            'valor' => $v,
+            'fecha' => $e->fecha,
+            'estado' => $estado,
+        ];
+    });
+
+    // 9. Calcular peso medio de aceptadas
+    $pesoMedioAceptadas = $estadisticas['aceptadas'] > 0 
+        ? round($estadisticas['sumaAceptadas'] / $estadisticas['aceptadas'], 2) 
+        : 0;
+
+    // 10. Respuesta final
+    return response()->json([
+        'total_pesadas' => $consideradas->count(),
+        'aceptadas' => $estadisticas['aceptadas'],
+        'rechazadas_homogeneidad' => $estadisticas['rechazadas'],
+        'peso_medio_global' => $mediaGlobal,
+        'peso_medio_aceptadas' => $pesoMedioAceptadas,
+        'tramo_aceptado' => ['min' => $tramoMin, 'max' => $tramoMax],
+        'listado_pesos' => $listado->values(),
+    ], Response::HTTP_OK);
+}
 
     /**
      * Calcula el peso medio de un dispositivo en un rango de días
@@ -491,157 +510,163 @@ private function getPesoReferencia(Camada $camada, int $edadDias): float
     }
 
     public function pesadasRango(Request $request, int $camadaId, int $dispId): JsonResponse
-    {
-        // 0. Asegúrate de importar al principio del fichero:
-        // use Illuminate\Support\Facades\Log;
+{
+    // 1. Validar parámetros
+    $request->validate([
+        'fecha_inicio'      => 'required|date|before_or_equal:fecha_fin',
+        'fecha_fin'         => 'required|date',
+        'coefHomogeneidad'  => 'nullable|numeric|min:0|max:1',
+    ]);
 
-        // 1. Validar fechas
-        $request->validate([
-            'fecha_inicio'      => 'required|date|before_or_equal:fecha_fin',
-            'fecha_fin'         => 'required|date',
-            'coefHomogeneidad'  => 'nullable|numeric|min:0|max:1',
-        ]);
-        $fi   = $request->query('fecha_inicio');
-        $ff   = $request->query('fecha_fin');
-        $coef = $request->has('coefHomogeneidad')
-            ? (float)$request->query('coefHomogeneidad')
-            : null;
+    $fi = $request->query('fecha_inicio');
+    $ff = $request->query('fecha_fin');
+    $coef = $request->has('coefHomogeneidad') ? (float)$request->query('coefHomogeneidad') : null;
 
-        Log::info("pesadasRango start — camada={$camadaId}, dispositivo={$dispId}, fi={$fi}, ff={$ff}, coef={$coef}");
+    // 2. Usar Eloquent solo para validación inicial (sin relaciones cargadas)
+    $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje')->findOrFail($camadaId);
+    
+    // Verificar que el dispositivo pertenece a la camada usando Query Builder
+    $dispositivo = DB::table('tb_dispositivo as d')
+        ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
+        ->where('rcd.id_camada', $camadaId)
+        ->where('d.id_dispositivo', $dispId)
+        ->select('d.numero_serie')
+        ->first();
 
-        // 2. Cargar camada y validar dispositivo asociado
-        $camada = Camada::findOrFail($camadaId);
-        $belongs = $camada->dispositivos()
-            ->wherePivot('id_dispositivo', $dispId)
-            ->exists();
-        Log::info("Dispositivo pertenece a la camada? " . ($belongs ? 'sí' : 'no'));
-        if (! $belongs) {
-            Log::warning("Error: dispositivo {$dispId} no está en camada {$camadaId}");
-            return response()->json([
-                'message' => "El dispositivo {$dispId} no pertenece a la camada {$camadaId}."
-            ], Response::HTTP_BAD_REQUEST);
-        }
-
-        // ← CAMBIO: cargar el dispositivo para obtener su número de serie
-        $dispositivo = Dispositivo::findOrFail($dispId);
-        $serie = $dispositivo->numero_serie;
-        Log::info("Número de serie del dispositivo: {$serie}");
-
-        // 3. Preparar iteración diaria
-        $inicio = Carbon::parse($fi);
-        $fin    = Carbon::parse($ff);
-        $period = CarbonPeriod::create($inicio, $fin);
-
-        $result = [];
-        foreach ($period as $dia) {
-            $d = $dia->format('Y-m-d');
-            Log::info("Procesando día: {$d}");
-
-            // 4. Edad de la camada ese día
-            $edadDias = (int)Carbon::parse($camada->fecha_hora_inicio)->diffInDays($dia);
-
-            Log::info("  Edad de camada en {$d}: {$edadDias} días");
-
-            // 5. Peso ideal de referencia
-            $pesoRef = $this->getPesoReferencia($camada, $edadDias);
-            Log::info("  Peso referencia: {$pesoRef}");
-
-            // 6. Lecturas del dispositivo ese día (usar número de serie)
-            $lecturas = EntradaDato::where('id_dispositivo', $serie)         // ← CAMBIO
-                ->whereDate('fecha', $d)
-                ->where('id_sensor', 2)
-                ->get()
-                ->map(fn($e) => (float)$e->valor);
-            Log::info("  Lecturas totales encontradas: " . $lecturas->count());
-
-            // 7. Filtrar por ±20% del peso ideal
-            $consideradas = $lecturas
-                ->filter(fn($v) => $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20)
-                ->values();
-            Log::info("  Después de ±20% ideal, quedan: " . $consideradas->count());
-
-            // 8. Media global de no descartadas
-            $mediaGlobal = $consideradas->count()
-                ? round($consideradas->avg(), 2)
-                : 0.0;
-            Log::info("  Media GLOBAL: {$mediaGlobal}");
-
-            // 9. Aceptadas tras coeficiente
-            $aceptadas = $consideradas
-                ->filter(fn($v) => is_null($coef) || ($mediaGlobal > 0
-                    && abs($v - $mediaGlobal) / $mediaGlobal <= $coef))
-                ->values();
-            Log::info("  Aceptadas tras coeficiente: " . $aceptadas->count());
-
-            // 10. Peso medio aceptadas
-            $pesoMedio = $aceptadas->count()
-                ? round($aceptadas->avg(), 2)
-                : 0.0;
-            Log::info("  Peso medio aceptadas: {$pesoMedio}");
-
-            // 11. Coeficiente de variación (CV = std/mean *100)
-            if ($aceptadas->count() > 1 && $pesoMedio > 0) {
-                $std = sqrt(
-                    $aceptadas
-                        ->map(fn($v) => pow($v - $pesoMedio, 2))
-                        ->sum() / $aceptadas->count()
-                );
-                $cv = round(($std / $pesoMedio) * 100, 2);
-            } else {
-                $cv = 0.0;
-            }
-            Log::info("  Coef. variación diario (%): {$cv}");
-
-            // 12. Reconstruir lecturas con fecha/hora originales (solo aceptadas)
-            $pesadas = EntradaDato::where('id_dispositivo', $serie)          // ← CAMBIO
-                ->whereDate('fecha', $d)
-                ->where('id_sensor', 2)
-                ->get(['valor', 'fecha'])
-                ->filter(function ($e) use ($pesoRef, $mediaGlobal, $coef) {
-                    $v = (float)$e->valor;
-                    return $pesoRef > 0
-                        && abs($v - $pesoRef) / $pesoRef <= 0.20
-                        && (is_null($coef)
-                            || ($mediaGlobal > 0
-                                && abs($v - $mediaGlobal) / $mediaGlobal <= $coef));
-                })
-                ->map(function ($e) {
-                    return [
-                        'valor' => (float)$e->valor,
-                        'fecha' => $e->fecha,
-                        'hora'  => Carbon::parse($e->fecha)->format('H:i:s'),
-                    ];
-                })
-                ->values();
-            Log::info("  Pesadas finales (solo aceptadas): " . $pesadas->count());
-
-            // 12.b) Contar aceptadas por hora (00–23)
-            $conteoPorHora = collect(range(0, 23))
-                ->mapWithKeys(fn($h) => [
-                    str_pad($h, 2, '0', STR_PAD_LEFT) => 0
-                ])
-                ->merge(
-                    $pesadas
-                        ->groupBy(fn($e) => Carbon::parse($e['fecha'])->format('H'))
-                        ->map(fn($col) => $col->count())
-                )
-                ->all();
-            Log::info("  Conteo por hora: " . json_encode($conteoPorHora));
-
-            // 13) Añadir al resultado
-            $result[] = [
-                'fecha'                 => $d,
-                'peso_medio_aceptadas'  => $pesoMedio,
-                'coef_variacion'        => $cv,
-                'pesadas'               => $pesadas,
-                'pesadas_horarias'      => $conteoPorHora,
-            ];
-        }
-
-        Log::info("pesadasRango end — total días procesados: " . count($result));
-
-        return response()->json($result, Response::HTTP_OK);
+    if (!$dispositivo) {
+        return response()->json([
+            'message' => "El dispositivo {$dispId} no pertenece a la camada {$camadaId}."
+        ], Response::HTTP_BAD_REQUEST);
     }
+
+    $fechaInicioCamada = $camada->fecha_hora_inicio;
+    $numeroSerie = $dispositivo->numero_serie;
+    $sexaje = $camada->sexaje;
+
+    // 3. Obtener TODAS las lecturas del rango usando Query Builder optimizado
+    $lecturasRaw = DB::table('tb_entrada_dato')
+        ->where('id_dispositivo', $numeroSerie)
+        ->where('id_sensor', 2)
+        ->whereBetween('fecha', [$fi . ' 00:00:00', $ff . ' 23:59:59'])
+        ->select('valor', 'fecha')
+        ->orderBy('fecha')
+        ->get();
+
+    // 4. Agrupar lecturas por día
+    $lecturasPorDia = $lecturasRaw->groupBy(function ($item) {
+        return Carbon::parse($item->fecha)->format('Y-m-d');
+    });
+
+    // 5. Procesar cada día
+    $inicio = Carbon::parse($fi);
+    $fin = Carbon::parse($ff);
+    $result = [];
+
+    for ($dia = $inicio->copy(); $dia->lte($fin); $dia->addDay()) {
+        $fechaStr = $dia->format('Y-m-d');
+        $lecturasDia = $lecturasPorDia->get($fechaStr, collect());
+
+        // Calcular edad de la camada
+        $edadDias = $fechaInicioCamada->diffInDays($dia);
+        
+        // Obtener peso de referencia
+        $pesoRef = $this->getPesoReferencia($sexaje, $edadDias);
+
+        if ($lecturasDia->isEmpty()) {
+            $result[] = [
+                'fecha' => $fechaStr,
+                'peso_medio_aceptadas' => 0.0,
+                'coef_variacion' => 0.0,
+                'pesadas' => [],
+                'pesadas_horarias' => array_fill_keys(
+                    array_map(fn($h) => str_pad($h, 2, '0', STR_PAD_LEFT), range(0, 23)), 
+                    0
+                ),
+            ];
+            continue;
+        }
+
+        // Filtrar por ±20% del peso ideal directamente desde los objetos
+        $consideradas = $lecturasDia->filter(function($e) use ($pesoRef) {
+            $v = (float)$e->valor;
+            return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20;
+        });
+        
+        // Extraer solo los valores numéricos para cálculos
+        $valoresConsiderados = $consideradas->map(fn($e) => (float)$e->valor);
+
+        if ($consideradas->isEmpty()) {
+            $result[] = [
+                'fecha' => $fechaStr,
+                'peso_medio_aceptadas' => 0.0,
+                'coef_variacion' => 0.0,
+                'pesadas' => [],
+                'pesadas_horarias' => array_fill_keys(
+                    array_map(fn($h) => str_pad($h, 2, '0', STR_PAD_LEFT), range(0, 23)), 
+                    0
+                ),
+            ];
+            continue;
+        }
+
+        // Media global de valores considerados
+        $mediaGlobal = $valoresConsiderados->avg();
+
+        // Aplicar coeficiente de homogeneidad si existe
+        $lecturasFiltradas = $consideradas;
+        if (!is_null($coef) && $mediaGlobal > 0) {
+            $lecturasFiltradas = $consideradas->filter(function($e) use ($mediaGlobal, $coef) {
+                $v = (float)$e->valor;
+                return abs($v - $mediaGlobal) / $mediaGlobal <= $coef;
+            });
+        }
+
+        // Extraer valores finales aceptados
+        $valoresAceptados = $lecturasFiltradas->map(fn($e) => (float)$e->valor);
+        
+        // Calcular estadísticas
+        $pesoMedio = $valoresAceptados->isEmpty() ? 0.0 : round($valoresAceptados->avg(), 2);
+        
+        // Coeficiente de variación
+        $cv = 0.0;
+        if ($valoresAceptados->count() > 1 && $pesoMedio > 0) {
+            $varianza = $valoresAceptados->map(fn($v) => pow($v - $pesoMedio, 2))->avg();
+            $cv = round((sqrt($varianza) / $pesoMedio) * 100, 2);
+        }
+
+        // Preparar datos de pesadas (usar las lecturas filtradas originales)
+        $pesadas = $lecturasFiltradas->map(function($e) {
+            $fecha = Carbon::parse($e->fecha);
+            return [
+                'valor' => (float)$e->valor,
+                'fecha' => $e->fecha,
+                'hora' => $fecha->format('H:i:s'),
+            ];
+        })->values();
+
+        // Conteo por hora
+        $conteoPorHora = array_fill_keys(
+            array_map(fn($h) => str_pad($h, 2, '0', STR_PAD_LEFT), range(0, 23)), 
+            0
+        );
+        
+        foreach ($pesadas as $pesada) {
+            $hora = Carbon::parse($pesada['fecha'])->format('H');
+            $horaKey = str_pad($hora, 2, '0', STR_PAD_LEFT);
+            $conteoPorHora[$horaKey]++;
+        }
+
+        $result[] = [
+            'fecha' => $fechaStr,
+            'peso_medio_aceptadas' => $pesoMedio,
+            'coef_variacion' => $cv,
+            'pesadas' => $pesadas,
+            'pesadas_horarias' => $conteoPorHora,
+        ];
+    }
+
+    return response()->json($result, Response::HTTP_OK);
+}
 
 
 
