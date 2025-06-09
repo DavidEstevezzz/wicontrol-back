@@ -273,36 +273,40 @@ class CamadaController extends Controller
         ? (float)$request->query('coefHomogeneidad') 
         : null;
 
-    // 2. Usar Eloquent solo para obtener datos básicos de camada
-    $camadaModel = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe')->findOrFail($camada);
-    
-    // 3. Obtener seriales de dispositivos usando Query Builder
-    $seriales = DB::table('tb_dispositivo as d')
-        ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
-        ->where('rcd.id_camada', $camada)
-        ->pluck('d.numero_serie')
-        ->filter()
-        ->unique();
+    // 2. UNA SOLA CONSULTA MASIVA para obtener TODO lo necesario
+    $resultados = DB::select("
+        SELECT 
+            c.id_camada, 
+            c.fecha_hora_inicio, 
+            c.sexaje, 
+            c.tipo_estirpe,
+            ed.id_dispositivo, 
+            ed.valor, 
+            ed.fecha
+        FROM tb_camada c
+        JOIN tb_relacion_camada_dispositivo rcd ON c.id_camada = rcd.id_camada
+        JOIN tb_dispositivo d ON rcd.id_dispositivo = d.id_dispositivo
+        LEFT JOIN tb_entrada_dato ed ON d.numero_serie = ed.id_dispositivo 
+            AND DATE(ed.fecha) = ? 
+            AND ed.id_sensor = 2
+        WHERE c.id_camada = ?
+    ", [$fecha, $camada]);
 
-    if ($seriales->isEmpty()) {
-        return response()->json(['message' => 'No hay dispositivos asociados a la camada'], 404);
+    if (empty($resultados)) {
+        return response()->json(['message' => 'Camada no encontrada'], 404);
     }
 
-    $fechaInicioCamada = $camadaModel->fecha_hora_inicio;
-    $sexaje = $camadaModel->sexaje;
+    // 3. Extraer datos de camada del primer resultado
+    $primerResultado = $resultados[0];
+    $camadaData = [
+        'id_camada' => $primerResultado->id_camada,
+        'fecha_hora_inicio' => Carbon::parse($primerResultado->fecha_hora_inicio),
+        'sexaje' => $primerResultado->sexaje,
+        'tipo_estirpe' => $primerResultado->tipo_estirpe
+    ];
 
-    // 3. Calcular edad y peso de referencia
-    $edadDias = $fechaInicioCamada->diffInDays($fecha);
-    $pesoRef = $this->getPesoReferencia($camadaModel, $edadDias);
-
-    // 4. Obtener todas las lecturas del día usando Query Builder optimizado
-    $lecturas = DB::table('tb_entrada_dato')
-        ->whereIn('id_dispositivo', $seriales)
-        ->whereDate('fecha', $fecha)
-        ->where('id_sensor', 2)
-        ->select('id_dispositivo', 'valor', 'fecha')
-        ->orderBy('fecha')
-        ->get();
+    // 4. Filtrar solo resultados con lecturas válidas
+    $lecturas = collect($resultados)->filter(fn($r) => $r->valor !== null);
 
     if ($lecturas->isEmpty()) {
         return response()->json([
@@ -316,15 +320,31 @@ class CamadaController extends Controller
         ], Response::HTTP_OK);
     }
 
-    // 5. Procesar lecturas - Filtrar por ±20% del peso ideal
-    $valores = $lecturas->map(fn($e) => (float)$e->valor);
-    $consideradas = $lecturas->filter(function($e) use ($pesoRef) {
-        $v = (float)$e->valor;
-        return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20;
-    });
+    // 5. Calcular edad y peso de referencia UNA SOLA VEZ
+    $edadDias = $camadaData['fecha_hora_inicio']->diffInDays($fecha);
+    $pesoRef = $this->getPesoReferenciaOptimizado($camadaData, $edadDias);
 
-    // 6. Calcular media global
-    $mediaGlobal = $consideradas->isEmpty() ? 0 : round($consideradas->avg(fn($e) => (float)$e->valor), 2);
+    // 6. Procesar todas las lecturas en UNA SOLA PASADA con arrays nativos de PHP
+    $consideradas = [];
+    $sumaConsideradas = 0;
+    $conteoConsideradas = 0;
+
+    // Primera pasada: filtrar por ±20% y calcular media global
+    foreach ($lecturas as $lectura) {
+        $v = (float)$lectura->valor;
+        
+        if ($pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20) {
+            $consideradas[] = [
+                'id_dispositivo' => $lectura->id_dispositivo,
+                'valor' => $v,
+                'fecha' => $lectura->fecha
+            ];
+            $sumaConsideradas += $v;
+            $conteoConsideradas++;
+        }
+    }
+
+    $mediaGlobal = $conteoConsideradas > 0 ? round($sumaConsideradas / $conteoConsideradas, 2) : 0;
 
     // 7. Calcular tramo de aceptación
     $tramoMin = $tramoMax = null;
@@ -333,56 +353,99 @@ class CamadaController extends Controller
         $tramoMax = round($mediaGlobal * (1 + $coefHomogeneidad), 2);
     }
 
-    // 8. Clasificar cada lectura de una sola pasada
-    $estadisticas = ['aceptadas' => 0, 'rechazadas' => 0, 'sumaAceptadas' => 0];
-    
-    $listado = $lecturas->map(function($e) use ($pesoRef, $mediaGlobal, $coefHomogeneidad, &$estadisticas) {
-        $v = (float)$e->valor;
+    // 8. Segunda pasada: aplicar coeficiente y clasificar en una sola operación
+    $aceptadas = 0;
+    $rechazadas = 0;
+    $sumaAceptadas = 0;
+    $listado = [];
+
+    foreach ($consideradas as $lectura) {
+        $v = $lectura['valor'];
         
-        // Determinar estado
-        if (abs($v - $pesoRef) / $pesoRef > 0.20) {
-            $estado = 'descartado';
+        if (is_null($coefHomogeneidad)) {
+            $estado = 'aceptada';
+            $aceptadas++;
+            $sumaAceptadas += $v;
         } else {
-            if (is_null($coefHomogeneidad)) {
+            $diffGlobal = $mediaGlobal > 0 ? abs($v - $mediaGlobal) / $mediaGlobal : 0;
+            if ($diffGlobal <= $coefHomogeneidad) {
                 $estado = 'aceptada';
-                $estadisticas['aceptadas']++;
-                $estadisticas['sumaAceptadas'] += $v;
+                $aceptadas++;
+                $sumaAceptadas += $v;
             } else {
-                $diffGlobal = $mediaGlobal > 0 ? abs($v - $mediaGlobal) / $mediaGlobal : 0;
-                if ($diffGlobal <= $coefHomogeneidad) {
-                    $estado = 'aceptada';
-                    $estadisticas['aceptadas']++;
-                    $estadisticas['sumaAceptadas'] += $v;
-                } else {
-                    $estado = 'rechazada';
-                    $estadisticas['rechazadas']++;
-                }
+                $estado = 'rechazada';
+                $rechazadas++;
             }
         }
 
-        return [
-            'id_dispositivo' => $e->id_dispositivo,
+        $listado[] = [
+            'id_dispositivo' => $lectura['id_dispositivo'],
             'valor' => $v,
-            'fecha' => $e->fecha,
+            'fecha' => $lectura['fecha'],
             'estado' => $estado,
         ];
-    });
+    }
 
-    // 9. Calcular peso medio de aceptadas
-    $pesoMedioAceptadas = $estadisticas['aceptadas'] > 0 
-        ? round($estadisticas['sumaAceptadas'] / $estadisticas['aceptadas'], 2) 
-        : 0;
+    // 9. Agregar lecturas descartadas al listado
+    foreach ($lecturas as $lectura) {
+        $v = (float)$lectura->valor;
+        
+        if ($pesoRef <= 0 || abs($v - $pesoRef) / $pesoRef > 0.20) {
+            $listado[] = [
+                'id_dispositivo' => $lectura->id_dispositivo,
+                'valor' => $v,
+                'fecha' => $lectura->fecha,
+                'estado' => 'descartado',
+            ];
+        }
+    }
 
-    // 10. Respuesta final
+    // 10. Calcular peso medio de aceptadas
+    $pesoMedioAceptadas = $aceptadas > 0 ? round($sumaAceptadas / $aceptadas, 2) : 0;
+
+    // 11. Respuesta final
     return response()->json([
-        'total_pesadas' => $consideradas->count(),
-        'aceptadas' => $estadisticas['aceptadas'],
-        'rechazadas_homogeneidad' => $estadisticas['rechazadas'],
+        'total_pesadas' => $conteoConsideradas,
+        'aceptadas' => $aceptadas,
+        'rechazadas_homogeneidad' => $rechazadas,
         'peso_medio_global' => $mediaGlobal,
         'peso_medio_aceptadas' => $pesoMedioAceptadas,
         'tramo_aceptado' => ['min' => $tramoMin, 'max' => $tramoMax],
-        'listado_pesos' => $listado->values(),
+        'listado_pesos' => $listado,
     ], Response::HTTP_OK);
+}
+
+private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): float
+{
+    $tipoEstirpe = trim($camadaData['tipo_estirpe'] ?? '');
+    if (empty($tipoEstirpe)) {
+        $tipoEstirpe = 'ross';
+    }
+
+    $tabla = 'tb_peso_' . strtolower($tipoEstirpe);
+    $sexaje = strtolower(trim($camadaData['sexaje'] ?? 'mixto'));
+
+    $columna = match($sexaje) {
+        'macho', 'machos' => 'Machos',
+        'hembra', 'hembras' => 'Hembras',
+        default => 'Mixto'
+    };
+
+    // Caché más específico
+    $cacheKey = "peso_ref_opt_{$tabla}_{$columna}_{$edadDias}";
+    
+    return (float) Cache::remember($cacheKey, 7200, function() use ($tabla, $columna, $edadDias) {
+        try {
+            return DB::select("SELECT {$columna} FROM {$tabla} WHERE edad = ? LIMIT 1", [$edadDias])[0]->$columna ?? 0;
+        } catch (\Exception $e) {
+            Log::warning("Error peso referencia optimizado: {$e->getMessage()}");
+            try {
+                return DB::select("SELECT {$columna} FROM tb_peso_ross WHERE edad = ? LIMIT 1", [$edadDias])[0]->$columna ?? 0;
+            } catch (\Exception $e2) {
+                return 0;
+            }
+        }
+    });
 }
 
     /**
