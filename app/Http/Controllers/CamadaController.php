@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Models\Camada;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
 use App\Models\Dispositivo;
 use Illuminate\Http\JsonResponse;
 use App\Models\EntradaDato;
@@ -15,6 +16,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Carbon\CarbonPeriod;
 use App\Models\TemperaturaBroilers;
+
 
 
 class CamadaController extends Controller
@@ -169,23 +171,26 @@ class CamadaController extends Controller
      * leyendo la columna adecuada según el sexaje.
      */
     private function getPesoReferencia(Camada $camada, int $edadDias): float
-    {
-        $tabla = 'tb_peso_' . strtolower($camada->tipo_estirpe);
-        $sexaje = strtolower($camada->sexaje);
+{
+    $tabla = 'tb_peso_' . strtolower($camada->tipo_estirpe);
+    $sexaje = strtolower($camada->sexaje);
 
-        // Alternativa 1: if-else
-        if ($sexaje === 'macho') {
-            $col = 'Machos';
-        } elseif ($sexaje === 'hembra') {
-            $col = 'Hembras';
-        } else {
-            $col = 'Mixto';
-        }
+    // Determinar columna según sexaje
+    $columna = match($sexaje) {
+        'macho' => 'Machos',
+        'hembra' => 'Hembras',
+        default => 'Mixto'
+    };
 
-        return (float) DB::table($tabla)
+    // Usar caché para evitar consultas repetidas
+    $cacheKey = "peso_referencia_{$tabla}_{$columna}_{$edadDias}";
+    
+    return (float) Cache::remember($cacheKey, 3600, function() use ($tabla, $columna, $edadDias) {
+        return DB::table($tabla)
             ->where('edad', $edadDias)
-            ->value($col);
-    }
+            ->value($columna) ?? 0;
+    });
+}
 
     /**
      * Filtra la colección de lecturas descartando aquellas
@@ -288,7 +293,7 @@ class CamadaController extends Controller
 
     // 3. Calcular edad y peso de referencia
     $edadDias = $fechaInicioCamada->diffInDays($fecha);
-    $pesoRef = $this->getPesoReferencia($sexaje, $edadDias);
+    $pesoRef = $this->getPesoReferencia($camadaModel, $edadDias);
 
     // 4. Obtener todas las lecturas del día usando Query Builder optimizado
     $lecturas = DB::table('tb_entrada_dato')
@@ -552,25 +557,32 @@ class CamadaController extends Controller
         ->orderBy('fecha')
         ->get();
 
-    // 4. Agrupar lecturas por día
+    // 4. Preparar fechas de inicio y fin
+    $inicio = Carbon::parse($fi);
+    $fin = Carbon::parse($ff);
+
+    // 5. Agrupar lecturas por día
     $lecturasPorDia = $lecturasRaw->groupBy(function ($item) {
         return Carbon::parse($item->fecha)->format('Y-m-d');
     });
 
-    // 5. Procesar cada día
-    $inicio = Carbon::parse($fi);
-    $fin = Carbon::parse($ff);
+    // 6. Precalcular todos los pesos de referencia del rango de una vez
+    $edadMinima = $fechaInicioCamada->diffInDays($inicio);
+    $edadMaxima = $fechaInicioCamada->diffInDays($fin);
+    $pesosReferencia = $this->getPesosReferenciaRango($camada, $edadMinima, $edadMaxima);
+
+    // 7. Procesar cada día
     $result = [];
 
-    for ($dia = $inicio->copy(); $dia->lte($fin); $dia->addDay()) {
+        for ($dia = $inicio->copy(); $dia->lte($fin); $dia->addDay()) {
         $fechaStr = $dia->format('Y-m-d');
         $lecturasDia = $lecturasPorDia->get($fechaStr, collect());
 
         // Calcular edad de la camada
         $edadDias = $fechaInicioCamada->diffInDays($dia);
         
-        // Obtener peso de referencia
-        $pesoRef = $this->getPesoReferencia($sexaje, $edadDias);
+        // Obtener peso de referencia del caché precargado
+        $pesoRef = $pesosReferencia->get($edadDias)->peso ?? 0;
 
         if ($lecturasDia->isEmpty()) {
             $result[] = [
@@ -666,6 +678,28 @@ class CamadaController extends Controller
     }
 
     return response()->json($result, Response::HTTP_OK);
+}
+
+private function getPesosReferenciaRango(Camada $camada, int $edadMinima, int $edadMaxima): Collection
+{
+    $tabla = 'tb_peso_' . strtolower($camada->tipo_estirpe);
+    $sexaje = strtolower($camada->sexaje);
+
+    $columna = match($sexaje) {
+        'macho' => 'Machos',
+        'hembra' => 'Hembras',
+        default => 'Mixto'
+    };
+
+    $cacheKey = "peso_referencia_rango_{$tabla}_{$columna}_{$edadMinima}_{$edadMaxima}";
+    
+    return Cache::remember($cacheKey, 3600, function() use ($tabla, $columna, $edadMinima, $edadMaxima) {
+        return DB::table($tabla)
+            ->whereBetween('edad', [$edadMinima, $edadMaxima])
+            ->select('edad', $columna . ' as peso')
+            ->get()
+            ->keyBy('edad');
+    });
 }
 
 
