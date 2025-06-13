@@ -259,12 +259,17 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
 
     Log::info("🔍 agruparPesadasConsecutivas: Iniciando con {$lecturas->count()} lecturas");
     
-    // Ordenar por fecha OBLIGATORIAMENTE y reindexar
-    $lecturas = $lecturas->sortBy('fecha')->values();
+    // ✅ FORZAR ORDENAMIENTO ESTRICTO con timestamp
+    $lecturasOrdenadas = $lecturas->sortBy(function($lectura) {
+        return Carbon::parse($lectura->fecha)->timestamp;
+    })->values();
+    
+    Log::info("🔍 agruparPesadasConsecutivas: Después de ordenar - Primera: {$lecturasOrdenadas->first()->fecha}, Última: {$lecturasOrdenadas->last()->fecha}");
+    
     $grupos = collect();
     $grupoActual = collect();
     
-    foreach ($lecturas as $index => $lectura) {
+    foreach ($lecturasOrdenadas as $index => $lectura) {
         $timestampActual = Carbon::parse($lectura->fecha);
         
         Log::info("🔍 Procesando lectura #{$index}: {$lectura->fecha} - Valor: {$lectura->valor}");
@@ -274,14 +279,16 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
             $grupoActual = collect([$lectura]);
             Log::info("🔍 Iniciando nuevo grupo con lectura: {$lectura->fecha}");
         } else {
-            // ✅ CORRECCIÓN: Comparar con la ÚLTIMA lectura del grupo actual
+            // Comparar con la ÚLTIMA lectura del grupo actual
             $ultimaLectura = $grupoActual->last();
             $timestampUltima = Carbon::parse($ultimaLectura->fecha);
             
-            // ✅ CORRECCIÓN: Usar valor absoluto y verificar que sea cronológicamente posterior
-            $diferencia = $timestampActual->diffInSeconds($timestampUltima, false);
+            // ✅ USAR TIMESTAMPS DIRECTOS para evitar problemas de diffInSeconds
+            $timestampActualUnix = $timestampActual->timestamp;
+            $timestampUltimaUnix = $timestampUltima->timestamp;
+            $diferencia = $timestampActualUnix - $timestampUltimaUnix;
             
-            Log::info("🔍 Comparando {$lectura->fecha} con {$ultimaLectura->fecha}: diferencia {$diferencia}s (signed)");
+            Log::info("🔍 Comparando {$lectura->fecha} ({$timestampActualUnix}) con {$ultimaLectura->fecha} ({$timestampUltimaUnix}): diferencia {$diferencia}s");
             
             // Solo agrupar si:
             // 1. La diferencia es positiva (lectura actual es posterior)
@@ -306,7 +313,7 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
         $grupos->push($this->crearLecturaPromedio($grupoActual->toArray()));
     }
     
-    Log::info("🔍 agruparPesadasConsecutivas: Resultado final {$lecturas->count()} -> {$grupos->count()} grupos");
+    Log::info("🔍 agruparPesadasConsecutivas: Resultado final {$lecturasOrdenadas->count()} -> {$grupos->count()} grupos");
     
     return $grupos;
 }
