@@ -256,39 +256,44 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
         return collect();
     }
 
-    $lecturas = $lecturas->sortBy('fecha');
-    $grupos = [];
-    $grupoActual = [];
+    // Ordenar por fecha OBLIGATORIAMENTE
+    $lecturas = $lecturas->sortBy('fecha')->values();
+    $grupos = collect();
+    $grupoActual = collect();
     
-    foreach ($lecturas as $lectura) {
+    foreach ($lecturas as $index => $lectura) {
         $timestampActual = Carbon::parse($lectura->fecha);
         
         // Si el grupo está vacío, iniciar nuevo grupo
-        if (empty($grupoActual)) {
-            $grupoActual = [$lectura];
+        if ($grupoActual->isEmpty()) {
+            $grupoActual = collect([$lectura]);
         } else {
-            // Comparar con la última lectura del grupo actual
-            $ultimaLectura = end($grupoActual);
-            $timestampUltima = Carbon::parse($ultimaLectura->fecha);
+            // Comparar con la PRIMERA lectura del grupo actual (no la última)
+            $primeraLectura = $grupoActual->first();
+            $timestampPrimera = Carbon::parse($primeraLectura->fecha);
+            
+            // Calcular diferencia en segundos desde la primera lectura del grupo
+            $diferencia = abs($timestampActual->diffInSeconds($timestampPrimera));
             
             // Si está dentro del margen de segundos, agregar al grupo
-            if ($timestampActual->diffInSeconds($timestampUltima) <= $margenSegundos) {
-                $grupoActual[] = $lectura;
+            if ($diferencia <= $margenSegundos) {
+                $grupoActual->push($lectura);
             } else {
                 // Finalizar grupo actual y crear el resultado
-                $grupos[] = $this->crearLecturaPromedio($grupoActual);
-                $grupoActual = [$lectura];
+                $grupos->push($this->crearLecturaPromedio($grupoActual->toArray()));
+                $grupoActual = collect([$lectura]);
             }
         }
     }
     
     // Procesar el último grupo
-    if (!empty($grupoActual)) {
-        $grupos[] = $this->crearLecturaPromedio($grupoActual);
+    if ($grupoActual->isNotEmpty()) {
+        $grupos->push($this->crearLecturaPromedio($grupoActual->toArray()));
     }
     
-    return collect($grupos);
+    return $grupos;
 }
+
 
 /**
  * Crea una lectura promedio a partir de un grupo de lecturas consecutivas
@@ -296,15 +301,24 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
 private function crearLecturaPromedio(array $grupo): object
 {
     if (count($grupo) === 1) {
-        return $grupo[0];
+        $resultado = clone $grupo[0];
+        $resultado->lecturas_agrupadas = 1;
+        return $resultado;
     }
     
-    $valorPromedio = collect($grupo)->avg('valor');
-    $fechaPromedio = collect($grupo)->avg(function($lectura) {
-        return Carbon::parse($lectura->fecha)->timestamp;
-    });
+    // Calcular promedio de valores
+    $valores = [];
+    $fechas = [];
     
-    // Usar la primera lectura como base y actualizar valores
+    foreach ($grupo as $lectura) {
+        $valores[] = (float)$lectura->valor;
+        $fechas[] = Carbon::parse($lectura->fecha)->timestamp;
+    }
+    
+    $valorPromedio = array_sum($valores) / count($valores);
+    $fechaPromedio = array_sum($fechas) / count($fechas);
+    
+    // Crear resultado basado en la primera lectura
     $resultado = clone $grupo[0];
     $resultado->valor = round($valorPromedio, 2);
     $resultado->fecha = Carbon::createFromTimestamp($fechaPromedio)->format('Y-m-d H:i:s');
@@ -313,9 +327,6 @@ private function crearLecturaPromedio(array $grupo): object
     return $resultado;
 }
 
-/**
- * Versión optimizada de calcularPesadasPorDia con agrupación de pesadas
- */
 public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
 {
     // 1. Parámetros
@@ -378,10 +389,19 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     $lecturasPorDispositivo = $lecturasOriginales->groupBy('id_dispositivo');
     $lecturasAgrupadas = collect();
     
+    Log::info("🔍 calcularPesadasPorDia: Procesando " . $lecturasPorDispositivo->count() . " dispositivos");
+    
     foreach ($lecturasPorDispositivo as $dispositivo => $lecturas) {
+        Log::info("🔍 calcularPesadasPorDia: Dispositivo {$dispositivo} tiene {$lecturas->count()} lecturas originales");
+        
         $lecturasAgrupadasDispositivo = $this->agruparPesadasConsecutivas($lecturas);
+        
+        Log::info("🔍 calcularPesadasPorDia: Dispositivo {$dispositivo} después de agrupar: {$lecturasAgrupadasDispositivo->count()} lecturas");
+        
         $lecturasAgrupadas = $lecturasAgrupadas->merge($lecturasAgrupadasDispositivo);
     }
+    
+    Log::info("🔍 calcularPesadasPorDia: Total lecturas agrupadas: {$lecturasAgrupadas->count()}");
 
     // 5. Calcular edad y peso de referencia UNA SOLA VEZ
     $edadDias = $camadaData['fecha_hora_inicio']->diffInDays($fecha);
@@ -488,6 +508,7 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
         ]
     ], Response::HTTP_OK);
 }
+
 
 private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): float
 {
@@ -828,7 +849,14 @@ private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): 
             'coef_variacion' => $cv,
             'pesadas' => $pesadas,
             'pesadas_horarias' => $conteoPorHora,
-            
+            'info_agrupacion' => [
+                'lecturas_originales' => $lecturasOriginalesDia->count(),
+                'lecturas_agrupadas' => $lecturasDia->count(),
+                'reduccion' => $lecturasOriginalesDia->count() - $lecturasDia->count(),
+                'porcentaje_reduccion' => $lecturasOriginalesDia->count() > 0 
+                    ? round((($lecturasOriginalesDia->count() - $lecturasDia->count()) / $lecturasOriginalesDia->count()) * 100, 2)
+                    : 0
+            ]
         ];
     }
 
