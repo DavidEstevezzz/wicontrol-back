@@ -253,76 +253,88 @@ class CamadaController extends Controller
 private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSegundos = 10): Collection
 {
     if ($lecturas->isEmpty()) {
+        Log::info("🔍 agruparPesadasConsecutivas: Collection vacía");
         return collect();
     }
 
-    // Ordenar por fecha OBLIGATORIAMENTE
-    $lecturas = $lecturas->sortBy('fecha')->values();
-    $grupos = collect();
-    $grupoActual = collect();
+    Log::info("🔍 agruparPesadasConsecutivas: Iniciando con {$lecturas->count()} lecturas");
+    
+    $lecturas = $lecturas->sortBy('fecha');
+    $grupos = [];
+    $grupoActual = [];
     
     foreach ($lecturas as $index => $lectura) {
         $timestampActual = Carbon::parse($lectura->fecha);
         
+        Log::info("🔍 Procesando lectura #{$index}: {$lectura->fecha} - Valor: {$lectura->valor}");
+        
         // Si el grupo está vacío, iniciar nuevo grupo
-        if ($grupoActual->isEmpty()) {
-            $grupoActual = collect([$lectura]);
+        if (empty($grupoActual)) {
+            $grupoActual = [$lectura];
+            Log::info("🔍 Iniciando nuevo grupo con lectura: {$lectura->fecha}");
         } else {
-            // Comparar con la PRIMERA lectura del grupo actual (no la última)
-            $primeraLectura = $grupoActual->first();
-            $timestampPrimera = Carbon::parse($primeraLectura->fecha);
+            // Comparar con la última lectura del grupo actual
+            $ultimaLectura = end($grupoActual);
+            $timestampUltima = Carbon::parse($ultimaLectura->fecha);
+            $diferencia = $timestampActual->diffInSeconds($timestampUltima);
             
-            // Calcular diferencia en segundos desde la primera lectura del grupo
-            $diferencia = abs($timestampActual->diffInSeconds($timestampPrimera));
+            Log::info("🔍 Comparando {$lectura->fecha} con {$ultimaLectura->fecha}: diferencia {$diferencia}s");
             
             // Si está dentro del margen de segundos, agregar al grupo
             if ($diferencia <= $margenSegundos) {
-                $grupoActual->push($lectura);
+                $grupoActual[] = $lectura;
+                Log::info("🔍 ✅ Agregado al grupo actual (total en grupo: " . count($grupoActual) . ")");
             } else {
                 // Finalizar grupo actual y crear el resultado
-                $grupos->push($this->crearLecturaPromedio($grupoActual->toArray()));
-                $grupoActual = collect([$lectura]);
+                Log::info("🔍 ❌ Diferencia > {$margenSegundos}s, finalizando grupo de " . count($grupoActual) . " lecturas");
+                $grupos[] = $this->crearLecturaPromedio($grupoActual);
+                $grupoActual = [$lectura];
+                Log::info("🔍 Iniciando nuevo grupo con lectura: {$lectura->fecha}");
             }
         }
     }
     
     // Procesar el último grupo
-    if ($grupoActual->isNotEmpty()) {
-        $grupos->push($this->crearLecturaPromedio($grupoActual->toArray()));
+    if (!empty($grupoActual)) {
+        Log::info("🔍 Finalizando último grupo de " . count($grupoActual) . " lecturas");
+        $grupos[] = $this->crearLecturaPromedio($grupoActual);
     }
     
-    return $grupos;
+    Log::info("🔍 agruparPesadasConsecutivas: Resultado final {$lecturas->count()} -> " . count($grupos) . " grupos");
+    
+    return collect($grupos);
 }
-
 
 /**
  * Crea una lectura promedio a partir de un grupo de lecturas consecutivas
  */
 private function crearLecturaPromedio(array $grupo): object
 {
+    Log::info("🔍 crearLecturaPromedio: Procesando grupo de " . count($grupo) . " lecturas");
+    
     if (count($grupo) === 1) {
-        $resultado = clone $grupo[0];
+        $resultado = $grupo[0];
         $resultado->lecturas_agrupadas = 1;
+        Log::info("🔍 crearLecturaPromedio: Grupo único - valor: {$resultado->valor}, fecha: {$resultado->fecha}");
         return $resultado;
     }
     
-    // Calcular promedio de valores
-    $valores = [];
-    $fechas = [];
-    
-    foreach ($grupo as $lectura) {
-        $valores[] = (float)$lectura->valor;
-        $fechas[] = Carbon::parse($lectura->fecha)->timestamp;
-    }
+    $valores = array_map(function($lectura) { return (float)$lectura->valor; }, $grupo);
+    $fechas = array_map(function($lectura) { return Carbon::parse($lectura->fecha)->timestamp; }, $grupo);
     
     $valorPromedio = array_sum($valores) / count($valores);
     $fechaPromedio = array_sum($fechas) / count($fechas);
     
-    // Crear resultado basado en la primera lectura
+    Log::info("🔍 crearLecturaPromedio: Valores originales: " . implode(', ', $valores));
+    Log::info("🔍 crearLecturaPromedio: Valor promedio: {$valorPromedio}");
+    
+    // Usar la primera lectura como base y actualizar valores
     $resultado = clone $grupo[0];
     $resultado->valor = round($valorPromedio, 2);
     $resultado->fecha = Carbon::createFromTimestamp($fechaPromedio)->format('Y-m-d H:i:s');
     $resultado->lecturas_agrupadas = count($grupo);
+    
+    Log::info("🔍 crearLecturaPromedio: Resultado final - valor: {$resultado->valor}, fecha: {$resultado->fecha}, agrupadas: {$resultado->lecturas_agrupadas}");
     
     return $resultado;
 }
