@@ -264,7 +264,7 @@ private function agruparPesadasConsecutivas(Collection $lecturas, int $margenSeg
         return Carbon::parse($lectura->fecha)->timestamp;
     })->values();
     
-    Log::info("🔍 agruparPesadasConsecutivas: Después de ordenar - Primera: {$lecturasOrdenadas->first()->fecha}, Última: {$lecturasOrdenadas->last()->fecha}");
+    Log::info("🔍 aagruparPesadasConsecutivas: Después de ordenar - Primera: {$lecturasOrdenadas->first()->fecha}, Última: {$lecturasOrdenadas->last()->fecha}");
     
     $grupos = collect();
     $grupoActual = collect();
