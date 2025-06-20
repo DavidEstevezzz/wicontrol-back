@@ -337,6 +337,7 @@ private function crearLecturaPromedio(Collection $grupo): object
 
 /**
  * Versión optimizada de calcularPesadasPorDia con agrupación corregida
+ * Ahora incluye cálculo del coeficiente de variación
  */
 public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
 {
@@ -389,6 +390,7 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
             'rechazadas_homogeneidad' => 0,
             'peso_medio_global' => 0,
             'peso_medio_aceptadas' => 0,
+            'coef_variacion' => 0, // ✅ NUEVO CAMPO
             'tramo_aceptado' => ['min' => null, 'max' => null],
             'listado_pesos' => [],
             'info_agrupacion' => [
@@ -448,6 +450,7 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     $rechazadas = 0;
     $sumaAceptadas = 0;
     $listado = [];
+    $valoresAceptados = []; // ✅ NUEVO: Para calcular coeficiente de variación
 
     foreach ($consideradas as $lectura) {
         $v = $lectura['valor'];
@@ -456,12 +459,14 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
             $estado = 'aceptada';
             $aceptadas++;
             $sumaAceptadas += $v;
+            $valoresAceptados[] = $v; // ✅ NUEVO
         } else {
             $diffGlobal = $mediaGlobal > 0 ? abs($v - $mediaGlobal) / $mediaGlobal : 0;
             if ($diffGlobal <= $coefHomogeneidad) {
                 $estado = 'aceptada';
                 $aceptadas++;
                 $sumaAceptadas += $v;
+                $valoresAceptados[] = $v; // ✅ NUEVO
             } else {
                 $estado = 'rechazada';
                 $rechazadas++;
@@ -495,13 +500,29 @@ public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     // 11. Calcular peso medio de aceptadas
     $pesoMedioAceptadas = $aceptadas > 0 ? round($sumaAceptadas / $aceptadas, 2) : 0;
 
-    // 12. Respuesta final con información sobre agrupación
+    // 12. ✅ NUEVO: Calcular coeficiente de variación
+    $coefVariacion = 0;
+    if (count($valoresAceptados) > 1 && $pesoMedioAceptadas > 0) {
+        // Calcular desviación estándar
+        $sumaCuadrados = 0;
+        foreach ($valoresAceptados as $valor) {
+            $sumaCuadrados += pow($valor - $pesoMedioAceptadas, 2);
+        }
+        $varianza = $sumaCuadrados / count($valoresAceptados);
+        $desviacionEstandar = sqrt($varianza);
+        
+        // Coeficiente de variación = (desviación estándar / media) * 100
+        $coefVariacion = round(($desviacionEstandar / $pesoMedioAceptadas) * 100, 2);
+    }
+
+    // 13. Respuesta final con información sobre agrupación
     return response()->json([
         'total_pesadas' => $conteoConsideradas,
         'aceptadas' => $aceptadas,
         'rechazadas_homogeneidad' => $rechazadas,
         'peso_medio_global' => $mediaGlobal,
         'peso_medio_aceptadas' => $pesoMedioAceptadas,
+        'coef_variacion' => $coefVariacion, // ✅ NUEVO CAMPO
         'tramo_aceptado' => ['min' => $tramoMin, 'max' => $tramoMax],
         'listado_pesos' => $listado,
         'info_agrupacion' => [
