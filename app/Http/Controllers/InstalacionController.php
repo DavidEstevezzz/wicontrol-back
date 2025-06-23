@@ -4,6 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Instalacion;
 use Illuminate\Http\Request;
+use App\Models\Dispositivo;
+
+use Illuminate\Support\Facades\DB;
+
 
 class InstalacionController extends Controller
 {
@@ -38,12 +42,17 @@ class InstalacionController extends Controller
         return response()->json($instalaciones);
     }
 
-    /**
-     * Obtener una instalación específica con datos del usuario
-     */
-    public function show($id)
+     public function show($id)
     {
         $instalacion = Instalacion::with('usuario')->findOrFail($id);
+        
+        // Verificar que la instalación esté activa
+        if (!$instalacion->alta) {
+            return response()->json([
+                'message' => 'Esta instalación no está activa',
+                'instalacion' => $instalacion
+            ], 200); // No es error, pero aviso
+        }
         
         $response = [
             'id_instalacion' => $instalacion->id_instalacion,
@@ -65,25 +74,87 @@ class InstalacionController extends Controller
         
         return response()->json($response);
     }
-
+    
     /**
-     * Crear nueva instalación
+     * Crear nueva instalación y actualizar dispositivo
      */
     public function store(Request $request)
     {
         $request->validate([
+            'id_dispositivo' => 'required|exists:tb_dispositivo,id_dispositivo',
             'id_usuario' => 'required|exists:tb_usuario,id',
             'numero_rega' => 'required|string|max:50',
             'fecha_hora_alta' => 'required|date',
             'id_nave' => 'required|string|max:20',
         ]);
 
-        $instalacion = Instalacion::create($request->all());
-        
-        // Retornar con datos del usuario
-        $instalacion->load('usuario');
-        
-        return response()->json($instalacion, 201);
+        DB::beginTransaction();
+        try {
+            // Crear nueva instalación
+            $instalacion = Instalacion::create([
+                'id_usuario' => $request->id_usuario,
+                'numero_rega' => $request->numero_rega,
+                'fecha_hora_alta' => $request->fecha_hora_alta,
+                'id_nave' => $request->id_nave,
+                'alta' => 1
+            ]);
+            
+            // Actualizar el dispositivo para que apunte a la nueva instalación
+            $dispositivo = Dispositivo::findOrFail($request->id_dispositivo);
+            
+            // Opcional: Desactivar instalación anterior
+            if ($dispositivo->id_instalacion) {
+                $instalacionAnterior = Instalacion::find($dispositivo->id_instalacion);
+                if ($instalacionAnterior) {
+                    $instalacionAnterior->update([
+                        'alta' => 0,
+                        'fecha_hora_baja' => now()
+                    ]);
+                }
+            }
+            
+            // Actualizar dispositivo con nueva instalación
+            $dispositivo->update([
+                'id_instalacion' => $instalacion->id_instalacion,
+                'fecha_hora_alta' => $request->fecha_hora_alta
+            ]);
+            
+            DB::commit();
+            
+            // Cargar relaciones para respuesta
+            $instalacion->load('usuario');
+            
+            return response()->json($instalacion, 201);
+            
+        } catch (\Exception $e) {
+            DB::rollback();
+            return response()->json([
+                'message' => 'Error al crear la instalación',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Obtener historial de instalaciones de un dispositivo
+     */
+    public function getHistorialDispositivo($idDispositivo)
+    {
+        // Buscar todas las instalaciones que hayan estado asociadas a este dispositivo
+        $instalaciones = Instalacion::with('usuario')
+            ->whereHas('dispositivos', function($query) use ($idDispositivo) {
+                $query->where('id_dispositivo', $idDispositivo);
+            })
+            ->orWhere(function($query) use ($idDispositivo) {
+                // También buscar por referencia actual
+                $query->whereHas('dispositivos', function($subQuery) use ($idDispositivo) {
+                    $subQuery->where('id_dispositivo', $idDispositivo);
+                });
+            })
+            ->orderBy('fecha_hora_alta', 'desc')
+            ->get();
+            
+        return response()->json($instalaciones);
     }
 
     /**
