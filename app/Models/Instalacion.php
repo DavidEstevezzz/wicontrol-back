@@ -21,4 +21,10 @@ class Instalacion extends Model
     {
         return $this->belongsTo(Granja::class, 'numero_rega', 'numero_rega');
     }
+
+    // Relación con Usuario (instalador)
+    public function usuario()
+    {
+        return $this->belongsTo(Usuario::class, 'id_usuario', 'id');
+    }
 }
