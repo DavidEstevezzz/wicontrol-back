@@ -523,6 +523,14 @@ class CamadaController extends Controller
             'coef_variacion' => $coefVariacion, // ✅ NUEVO CAMPO
             'tramo_aceptado' => ['min' => $tramoMin, 'max' => $tramoMax],
             'listado_pesos' => $listado,
+            'peso_referencia' => [
+                'valor' => $pesoRef,
+                'edad_dias' => $edadDias,
+                'sexaje' => $camadaData['sexaje'] ?? '',
+                'tipo_ave' => $camadaData['tipo_ave'] ?? '',
+                'tipo_estirpe' => $camadaData['tipo_estirpe'] ?? '',
+                'tabla_usada' => $this->getTablaUsada($camadaData), // método auxiliar
+            ],
             'info_agrupacion' => [
                 'lecturas_originales' => $lecturasOriginales->count(),
                 'lecturas_agrupadas' => $lecturasAgrupadas->count(),
@@ -532,6 +540,22 @@ class CamadaController extends Controller
                     : 0
             ]
         ], Response::HTTP_OK);
+    }
+
+    private function getTablaUsada(array $camadaData): string
+    {
+        $tipoAve = strtolower(trim($camadaData['tipo_ave'] ?? ''));
+        $tipoEstirpe = strtolower(trim($camadaData['tipo_estirpe'] ?? ''));
+
+        if ($tipoAve === 'recrias' && $tipoEstirpe === 'ross') {
+            return 'tb_peso_reproductores_ross';
+        } elseif ($tipoAve === 'reproductores' && $tipoEstirpe === 'ross') {
+            return 'tb_peso_reproductores_ross';
+        } elseif ($tipoAve === 'broilers' && $tipoEstirpe === 'ross') {
+            return 'tb_peso_ross';
+        } else {
+            return "tb_peso_{$tipoEstirpe}";
+        }
     }
 
     private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): float
@@ -957,6 +981,13 @@ class CamadaController extends Controller
                 'coef_variacion' => $cv,
                 'pesadas' => $pesadas,
                 'pesadas_horarias' => $conteoPorHora,
+                'peso_referencia' => [
+                    'valor' => $pesoRef,
+                    'edad_dias' => $edadDias,
+                    'sexaje' => $camada->sexaje,
+                    'tipo_ave' => $camada->tipo_ave,
+                    'tipo_estirpe' => $camada->tipo_estirpe
+                ],
                 'info_agrupacion' => [
                     'lecturas_originales' => $lecturasOriginalesDia->count(),
                     'lecturas_agrupadas' => $lecturasDia->count(),
