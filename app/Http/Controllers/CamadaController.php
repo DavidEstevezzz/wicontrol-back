@@ -425,8 +425,12 @@ class CamadaController extends Controller
         // Primera pasada: filtrar por ±20% y calcular media global
         foreach ($lecturasAgrupadas as $lectura) {
             $v = (float)$lectura->valor;
+            $diferenciaPorcentual = $pesoRef > 0 ? abs($v - $pesoRef) / $pesoRef : 0;
+            $esConsiderada = $pesoRef > 0 && $diferenciaPorcentual <= 0.20;
 
-            if ($pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20) {
+            Log::info("Valor: {$v}g, PesoRef: {$pesoRef}g, Diff%: " . round($diferenciaPorcentual * 100, 1) . "%, Considerada: " . ($esConsiderada ? 'SÍ' : 'NO'));
+
+            if ($esConsiderada) {
                 $consideradas[] = [
                     'id_dispositivo' => $lectura->id_dispositivo,
                     'valor' => $v,
@@ -803,6 +807,9 @@ class CamadaController extends Controller
 
             // Obtener peso de referencia
             $pesoRef = $pesosReferencia->get($edadDias)->peso ?? 0;
+
+            Log::info("Peso referencia calculado: {$pesoRef}, Edad días: {$edadDias}");
+
 
             if ($lecturasDia->isEmpty()) {
                 $result[] = [
