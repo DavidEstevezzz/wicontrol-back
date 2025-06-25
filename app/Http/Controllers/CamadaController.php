@@ -334,6 +334,10 @@ class CamadaController extends Controller
             ? (float)$request->query('coefHomogeneidad')
             : null;
 
+        $porcentajeDescarte = $request->has('porcentajeDescarte')
+            ? (float)$request->query('porcentajeDescarte') / 100  // Convertir de % a decimal
+            : 0.20; // 20% por defecto
+
         // 2. CONSULTA MASIVA ORDENADA
         $resultados = DB::select("
         SELECT 
@@ -418,9 +422,9 @@ class CamadaController extends Controller
         foreach ($lecturasAgrupadas as $lectura) {
             $v = (float)$lectura->valor;
             $diferenciaPorcentual = $pesoRef > 0 ? abs($v - $pesoRef) / $pesoRef : 0;
-            $esConsiderada = $pesoRef > 0 && $diferenciaPorcentual <= 0.20;
+            $esConsiderada = $pesoRef > 0 && $diferenciaPorcentual <= $porcentajeDescarte; // ✅ VARIABLE
 
-            Log::info("Valor: {$v}g, PesoRef: {$pesoRef}g, Diff%: " . round($diferenciaPorcentual * 100, 1) . "%, Considerada: " . ($esConsiderada ? 'SÍ' : 'NO'));
+            Log::info("Valor: {$v}g, PesoRef: {$pesoRef}g, Diff%: " . round($diferenciaPorcentual * 100, 1) . "%, Umbral%: " . round($porcentajeDescarte * 100, 1) . "%, Considerada: " . ($esConsiderada ? 'SÍ' : 'NO'));
 
             if ($esConsiderada) {
                 $consideradas[] = [
@@ -484,7 +488,7 @@ class CamadaController extends Controller
         foreach ($lecturasAgrupadas as $lectura) {
             $v = (float)$lectura->valor;
 
-            if ($pesoRef <= 0 || abs($v - $pesoRef) / $pesoRef > 0.20) {
+            if ($pesoRef <= 0 || abs($v - $pesoRef) / $pesoRef > $porcentajeDescarte) {
                 $listado[] = [
                     'id_dispositivo' => $lectura->id_dispositivo,
                     'valor' => $v,
@@ -596,14 +600,13 @@ class CamadaController extends Controller
 
         $sexaje = strtolower(trim($camadaData['sexaje'] ?? 'mixto'));
 
-        if($tabla !== 'tb_peso_ross') {
+        if ($tabla !== 'tb_peso_ross') {
             $columna = match ($sexaje) {
                 'macho', 'machos' => 'macho',      // ✅ CORREGIDO: 'macho' no 'Machos'
                 'hembra', 'hembras' => 'hembra',   // ✅ CORREGIDO: 'hembra' no 'Hembras'  
                 default => 'macho'  // ✅ Default a macho para reproductores (no hay mixto)
             };
-        }
-        else {
+        } else {
             $columna = match ($sexaje) {
                 'macho', 'machos' => 'Machos',
                 'hembra', 'hembras' => 'Hembras',
@@ -790,28 +793,34 @@ class CamadaController extends Controller
             'fecha_inicio'      => 'required|date|before_or_equal:fecha_fin',
             'fecha_fin'         => 'required|date',
             'coefHomogeneidad'  => 'nullable|numeric|min:0|max:1',
+            'porcentajeDescarte' => 'nullable|numeric|min:0|max:100', // ✅ VALIDACIÓN AÑADIDA
         ]);
 
         $fi = $request->query('fecha_inicio');
         $ff = $request->query('fecha_fin');
         $coef = $request->has('coefHomogeneidad') ? (float)$request->query('coefHomogeneidad') : null;
 
+
+        $porcentajeDescarte = $request->has('porcentajeDescarte')
+            ? (float)$request->query('porcentajeDescarte') / 100  // Convertir de % a decimal
+            : 0.20; // 20% por defecto
+
         // 2. Verificar camada y dispositivo
         $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe', 'tipo_ave')->findOrFail($camadaId);
 
         Log::info("=== PESADAS RANGO DEBUG ===", [
-        'camada_id' => $camadaId,
-        'dispositivo_id' => $dispId,
-        'fecha_inicio' => $fi,
-        'fecha_fin' => $ff,
-        'camada_datos' => [
-            'id_camada' => $camada->id_camada,
-            'tipo_ave' => $camada->tipo_ave ?? 'NULL',
-            'tipo_estirpe' => $camada->tipo_estirpe ?? 'NULL',
-            'sexaje' => $camada->sexaje ?? 'NULL',
-            'fecha_inicio' => $camada->fecha_hora_inicio
-        ]
-    ]);
+            'camada_id' => $camadaId,
+            'dispositivo_id' => $dispId,
+            'fecha_inicio' => $fi,
+            'fecha_fin' => $ff,
+            'camada_datos' => [
+                'id_camada' => $camada->id_camada,
+                'tipo_ave' => $camada->tipo_ave ?? 'NULL',
+                'tipo_estirpe' => $camada->tipo_estirpe ?? 'NULL',
+                'sexaje' => $camada->sexaje ?? 'NULL',
+                'fecha_inicio' => $camada->fecha_hora_inicio
+            ]
+        ]);
 
         $dispositivo = DB::table('tb_dispositivo as d')
             ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
@@ -925,9 +934,9 @@ class CamadaController extends Controller
             }
 
             // Filtrar por ±20% del peso ideal
-            $consideradas = $lecturasDia->filter(function ($e) use ($pesoRef) {
+            $consideradas = $lecturasDia->filter(function ($e) use ($pesoRef, $porcentajeDescarte) {
                 $v = (float)$e->valor;
-                return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= 0.20;
+                return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= $porcentajeDescarte; // ✅ VARIABLE
             });
 
             $valoresConsiderados = $consideradas->map(fn($e) => (float)$e->valor);
