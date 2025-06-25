@@ -543,37 +543,87 @@ class CamadaController extends Controller
     }
 
     private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): float
-    {
-        $tipoEstirpe = trim($camadaData['tipo_estirpe'] ?? '');
-        if (empty($tipoEstirpe)) {
-            $tipoEstirpe = 'ross';
-        }
-
-        $tabla = 'tb_peso_' . strtolower($tipoEstirpe);
-        $sexaje = strtolower(trim($camadaData['sexaje'] ?? 'mixto'));
-
-        $columna = match ($sexaje) {
-            'macho', 'machos' => 'Machos',
-            'hembra', 'hembras' => 'Hembras',
-            default => 'Mixto'
-        };
-
-        // Caché más específico
-        $cacheKey = "peso_ref_opt_{$tabla}_{$columna}_{$edadDias}";
-
-        return (float) Cache::remember($cacheKey, 7200, function () use ($tabla, $columna, $edadDias) {
-            try {
-                return DB::select("SELECT {$columna} FROM {$tabla} WHERE edad = ? LIMIT 1", [$edadDias])[0]->$columna ?? 0;
-            } catch (\Exception $e) {
-                Log::warning("Error peso referencia optimizado: {$e->getMessage()}");
-                try {
-                    return DB::select("SELECT {$columna} FROM tb_peso_ross WHERE edad = ? LIMIT 1", [$edadDias])[0]->$columna ?? 0;
-                } catch (\Exception $e2) {
-                    return 0;
-                }
-            }
-        });
+{
+    // ✅ NUEVA LÓGICA: Considerar tanto tipo_ave como tipo_estirpe
+    $tipoAve = strtolower(trim($camadaData['tipo_ave'] ?? ''));
+    $tipoEstirpe = strtolower(trim($camadaData['tipo_estirpe'] ?? ''));
+    
+    if (empty($tipoEstirpe)) {
+        $tipoEstirpe = 'ross';
     }
+
+    // ✅ DETERMINAR LA TABLA CORRECTA según tipo_ave + tipo_estirpe
+    $tabla = null;
+
+    // Casos específicos para diferentes combinaciones
+    if ($tipoAve === 'recrias' && $tipoEstirpe === 'ross') {
+        $tabla = 'tb_peso_reproductores_ross';  // ✅ RECRIAS → REPRODUCTORES
+    } elseif ($tipoAve === 'reproductores' && $tipoEstirpe === 'ross') {
+        $tabla = 'tb_peso_reproductores_ross';
+    } elseif ($tipoAve === 'broilers' && $tipoEstirpe === 'ross') {
+        $tabla = 'tb_peso_ross';  // Mantener para broilers
+    } elseif ($tipoAve === 'pavos' && $tipoEstirpe === 'butpremium') {
+        $tabla = 'tb_peso_pavos_butpremium';
+    } elseif ($tipoAve === 'pavos' && $tipoEstirpe === 'hybridconverter') {
+        $tabla = 'tb_peso_pavos_hybridconverter';
+    } elseif ($tipoAve === 'pavos' && $tipoEstirpe === 'nicholasselect') {
+        $tabla = 'tb_peso_pavos_nicholasselect';
+    } else {
+        // Fallback: intentar construir el nombre dinámicamente
+        if (!empty($tipoAve) && $tipoAve !== 'broilers') {
+            $tabla = "tb_peso_{$tipoAve}_{$tipoEstirpe}";
+        } else {
+            $tabla = 'tb_peso_' . $tipoEstirpe;  // Comportamiento original
+        }
+    }
+
+    $sexaje = strtolower(trim($camadaData['sexaje'] ?? 'mixto'));
+
+    $columna = match ($sexaje) {
+        'macho', 'machos' => 'macho',      // ✅ CORREGIDO: 'macho' no 'Machos'
+        'hembra', 'hembras' => 'hembra',   // ✅ CORREGIDO: 'hembra' no 'Hembras'  
+        default => 'macho'  // ✅ Default a macho para reproductores (no hay mixto)
+    };
+
+    // Caché más específico incluyendo tipo_ave
+    $cacheKey = "peso_ref_opt_{$tabla}_{$columna}_{$edadDias}";
+
+    return (float) Cache::remember($cacheKey, 7200, function () use ($tabla, $columna, $edadDias, $tipoAve, $tipoEstirpe) {
+        try {
+            // ✅ LOG PARA DEBUG
+            Log::info("Consultando tabla: {$tabla}, columna: {$columna}, edad: {$edadDias}");
+            
+            $result = DB::select("SELECT {$columna} FROM {$tabla} WHERE edad = ? LIMIT 1", [$edadDias]);
+            if (!empty($result)) {
+                $peso = $result[0]->$columna ?? 0;
+                Log::info("Peso encontrado: {$peso}g desde {$tabla}");
+                return $peso;
+            }
+            return 0;
+        } catch (\Exception $e) {
+            Log::warning("Error peso referencia optimizado para {$tabla}: {$e->getMessage()}");
+            
+            // ✅ FALLBACK INTELIGENTE según el tipo
+            try {
+                $fallbackTable = null;
+                if ($tipoAve === 'recrias' || $tipoAve === 'reproductores') {
+                    $fallbackTable = 'tb_peso_reproductores_ross';
+                } elseif ($tipoAve === 'broilers' || empty($tipoAve)) {
+                    $fallbackTable = 'tb_peso_ross';
+                } else {
+                    $fallbackTable = 'tb_peso_ross';  // Último fallback
+                }
+                
+                Log::info("Usando fallback table: {$fallbackTable}");
+                $result = DB::select("SELECT {$columna} FROM {$fallbackTable} WHERE edad = ? LIMIT 1", [$edadDias]);
+                return !empty($result) ? $result[0]->$columna ?? 0 : 0;
+            } catch (\Exception $e2) {
+                Log::error("Error en fallback: {$e2->getMessage()}");
+                return 0;
+            }
+        }
+    });
+}
 
     /**
      * Calcula el peso medio de un dispositivo en un rango de días
