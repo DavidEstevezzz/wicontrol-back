@@ -548,6 +548,7 @@ class CamadaController extends Controller
     $tipoAve = strtolower(trim($camadaData['tipo_ave'] ?? ''));
     $tipoEstirpe = strtolower(trim($camadaData['tipo_estirpe'] ?? ''));
     
+    Log::info("Obteniendo peso referencia para tipo_ave: {$tipoAve}, tipo_estirpe: {$tipoEstirpe}, edad_dias: {$edadDias}");
     if (empty($tipoEstirpe)) {
         $tipoEstirpe = 'ross';
     }
