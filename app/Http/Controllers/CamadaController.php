@@ -405,7 +405,7 @@ class CamadaController extends Controller
         // 6. Calcular edad y peso de referencia
         $edadDias = $camadaData['fecha_hora_inicio']->diffInDays($fecha);
         $pesoRef = $this->getPesoReferenciaOptimizado([
-            'tipo_ave' => $camadaData['tipo_ave'] ?? '',           
+            'tipo_ave' => $camadaData['tipo_ave'] ?? '',
             'tipo_estirpe' => $camadaData['tipo_estirpe'] ?? '',
             'sexaje' => $camadaData['sexaje'] ?? ''
         ], $edadDias);
@@ -764,7 +764,7 @@ class CamadaController extends Controller
         $coef = $request->has('coefHomogeneidad') ? (float)$request->query('coefHomogeneidad') : null;
 
         // 2. Verificar camada y dispositivo
-        $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe')->findOrFail($camadaId);
+        $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe', 'tipo_ave')->findOrFail($camadaId);
 
         $dispositivo = DB::table('tb_dispositivo as d')
             ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
@@ -849,7 +849,11 @@ class CamadaController extends Controller
             $edadDias = $fechaInicioCamada->diffInDays($dia);
 
             // Obtener peso de referencia
-            $pesoRef = $pesosReferencia->get($edadDias)->peso ?? 0;
+            $pesoRef = $this->getPesoReferenciaOptimizado([
+                'tipo_ave' => $camada->tipo_ave ?? '',
+                'tipo_estirpe' => $camada->tipo_estirpe ?? '',
+                'sexaje' => $camada->sexaje ?? ''
+            ], $edadDias);
 
             Log::info("Peso referencia calculado: {$pesoRef}, Edad días: {$edadDias}");
 
