@@ -596,11 +596,20 @@ class CamadaController extends Controller
 
         $sexaje = strtolower(trim($camadaData['sexaje'] ?? 'mixto'));
 
-        $columna = match ($sexaje) {
-            'macho', 'machos' => 'macho',      // ✅ CORREGIDO: 'macho' no 'Machos'
-            'hembra', 'hembras' => 'hembra',   // ✅ CORREGIDO: 'hembra' no 'Hembras'  
-            default => 'mixto'  // ✅ Default a macho para reproductores (no hay mixto)
-        };
+        if($tabla !== 'tb_peso_ross') {
+            $columna = match ($sexaje) {
+                'macho', 'machos' => 'macho',      // ✅ CORREGIDO: 'macho' no 'Machos'
+                'hembra', 'hembras' => 'hembra',   // ✅ CORREGIDO: 'hembra' no 'Hembras'  
+                default => 'macho'  // ✅ Default a macho para reproductores (no hay mixto)
+            };
+        }
+        else {
+            $columna = match ($sexaje) {
+                'macho', 'machos' => 'Machos',
+                'hembra', 'hembras' => 'Hembras',
+                default => 'Mixto'  // ✅ Broilers pueden ser mixtos
+            };
+        }
 
         // Caché más específico incluyendo tipo_ave
         $cacheKey = "peso_ref_opt_{$tabla}_{$columna}_{$edadDias}";
