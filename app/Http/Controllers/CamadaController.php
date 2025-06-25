@@ -599,7 +599,7 @@ class CamadaController extends Controller
         $columna = match ($sexaje) {
             'macho', 'machos' => 'macho',      // ✅ CORREGIDO: 'macho' no 'Machos'
             'hembra', 'hembras' => 'hembra',   // ✅ CORREGIDO: 'hembra' no 'Hembras'  
-            default => 'macho'  // ✅ Default a macho para reproductores (no hay mixto)
+            default => 'mixto'  // ✅ Default a macho para reproductores (no hay mixto)
         };
 
         // Caché más específico incluyendo tipo_ave
@@ -789,6 +789,20 @@ class CamadaController extends Controller
 
         // 2. Verificar camada y dispositivo
         $camada = Camada::select('id_camada', 'fecha_hora_inicio', 'sexaje', 'tipo_estirpe', 'tipo_ave')->findOrFail($camadaId);
+
+        Log::info("=== PESADAS RANGO DEBUG ===", [
+        'camada_id' => $camadaId,
+        'dispositivo_id' => $dispId,
+        'fecha_inicio' => $fi,
+        'fecha_fin' => $ff,
+        'camada_datos' => [
+            'id_camada' => $camada->id_camada,
+            'tipo_ave' => $camada->tipo_ave ?? 'NULL',
+            'tipo_estirpe' => $camada->tipo_estirpe ?? 'NULL',
+            'sexaje' => $camada->sexaje ?? 'NULL',
+            'fecha_inicio' => $camada->fecha_hora_inicio
+        ]
+    ]);
 
         $dispositivo = DB::table('tb_dispositivo as d')
             ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
