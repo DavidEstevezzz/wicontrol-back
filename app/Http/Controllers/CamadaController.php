@@ -324,7 +324,7 @@ class CamadaController extends Controller
 
     /**
      * Versión optimizada de calcularPesadasPorDia con agrupación corregida
-     * Ahora incluye cálculo del coeficiente de variación
+     * Ahora incluye cálculo del coeficiente de variación y ajuste de descarte para broilers mixtos
      */
     public function calcularPesadasPorDia(Request $request, $camada): JsonResponse
     {
@@ -383,7 +383,7 @@ class CamadaController extends Controller
                 'rechazadas_homogeneidad' => 0,
                 'peso_medio_global' => 0,
                 'peso_medio_aceptadas' => 0,
-                'coef_variacion' => 0, // ✅ NUEVO CAMPO
+                'coef_variacion' => 0,
                 'tramo_aceptado' => ['min' => null, 'max' => null],
                 'listado_pesos' => [],
                 'info_agrupacion' => [
@@ -395,10 +395,9 @@ class CamadaController extends Controller
             ], Response::HTTP_OK);
         }
 
-        // 5. ✅ APLICAR AGRUPACIÓN POR DISPOSITIVO
+        // 5. ✅ APLICAR AGRUPACIÓN POR DISPOSITIVO (COMENTADO - SIN AGRUPACIÓN)
         // $lecturasPorDispositivo = $lecturasOriginales->groupBy('id_dispositivo');
         // $lecturasAgrupadas = collect();
-
         // foreach ($lecturasPorDispositivo as $dispositivo => $lecturas) {
         //     $lecturasAgrupadasDispositivo = $this->agruparPesadasConsecutivas($lecturas);
         //     $lecturasAgrupadas = $lecturasAgrupadas->merge($lecturasAgrupadasDispositivo);
@@ -413,18 +412,39 @@ class CamadaController extends Controller
             'tipo_estirpe' => $camadaData['tipo_estirpe'] ?? '',
             'sexaje' => $camadaData['sexaje'] ?? ''
         ], $edadDias);
+
+        // ✅ NUEVO: Ajustar porcentaje de descarte para broilers mixtos según edad
+        $porcentajesAjustados = $this->ajustarPorcentajeDescarte(
+            $porcentajeDescarte,
+            $edadDias,
+            $camadaData['tipo_ave'] ?? '',
+            $camadaData['sexaje'] ?? ''
+        );
+
         // 7. Procesar lecturas agrupadas
         $consideradas = [];
         $sumaConsideradas = 0;
         $conteoConsideradas = 0;
 
-        // Primera pasada: filtrar por ±20% y calcular media global
+        // Primera pasada: filtrar por ±% ajustado y calcular media global
         foreach ($lecturasAgrupadas as $lectura) {
             $v = (float)$lectura->valor;
             $diferenciaPorcentual = $pesoRef > 0 ? abs($v - $pesoRef) / $pesoRef : 0;
-            $esConsiderada = $pesoRef > 0 && $diferenciaPorcentual <= $porcentajeDescarte; // ✅ VARIABLE
 
-            Log::info("Valor: {$v}g, PesoRef: {$pesoRef}g, Diff%: " . round($diferenciaPorcentual * 100, 1) . "%, Umbral%: " . round($porcentajeDescarte * 100, 1) . "%, Considerada: " . ($esConsiderada ? 'SÍ' : 'NO'));
+            // ✅ USAR PORCENTAJES AJUSTADOS: determinar si está dentro del rango
+            $dentroDeLimiteInferior = $pesoRef > 0 && (($pesoRef - $v) / $pesoRef) <= $porcentajesAjustados['inferior'];
+            $dentroDeLimiteSuperior = $pesoRef > 0 && (($v - $pesoRef) / $pesoRef) <= $porcentajesAjustados['superior'];
+            $esConsiderada = $dentroDeLimiteInferior && $dentroDeLimiteSuperior;
+
+            Log::info("Análisis lectura", [
+                'valor' => $v . 'g',
+                'peso_ref' => $pesoRef . 'g',
+                'limite_inferior_ajustado' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                'limite_superior_ajustado' => round($porcentajesAjustados['superior'] * 100, 1) . '%',
+                'dentro_limite_inferior' => $dentroDeLimiteInferior ? 'SÍ' : 'NO',
+                'dentro_limite_superior' => $dentroDeLimiteSuperior ? 'SÍ' : 'NO',
+                'considerada' => $esConsiderada ? 'SÍ' : 'NO'
+            ]);
 
             if ($esConsiderada) {
                 $consideradas[] = [
@@ -488,7 +508,12 @@ class CamadaController extends Controller
         foreach ($lecturasAgrupadas as $lectura) {
             $v = (float)$lectura->valor;
 
-            if ($pesoRef <= 0 || abs($v - $pesoRef) / $pesoRef > $porcentajeDescarte) {
+            // ✅ USAR PORCENTAJES AJUSTADOS para determinar si fue descartada
+            $dentroDeLimiteInferior = $pesoRef > 0 && (($pesoRef - $v) / $pesoRef) <= $porcentajesAjustados['inferior'];
+            $dentroDeLimiteSuperior = $pesoRef > 0 && (($v - $pesoRef) / $pesoRef) <= $porcentajesAjustados['superior'];
+            $fueDescartada = !($dentroDeLimiteInferior && $dentroDeLimiteSuperior);
+
+            if ($fueDescartada) {
                 $listado[] = [
                     'id_dispositivo' => $lectura->id_dispositivo,
                     'valor' => $v,
@@ -534,6 +559,13 @@ class CamadaController extends Controller
                 'tipo_ave' => $camadaData['tipo_ave'] ?? '',
                 'tipo_estirpe' => $camadaData['tipo_estirpe'] ?? '',
                 'tabla_usada' => $this->getTablaUsada($camadaData), // método auxiliar
+                'porcentajes_descarte' => [
+                    'original' => round($porcentajeDescarte * 100, 1) . '%',
+                    'inferior_ajustado' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                    'superior_ajustado' => round($porcentajesAjustados['superior'] * 100, 1) . '%',
+                    'ajuste_aplicado' => ($camadaData['tipo_ave'] ?? '') === 'broilers' &&
+                        ($camadaData['sexaje'] ?? '') === 'mixto'
+                ]
             ],
             'info_agrupacion' => [
                 'lecturas_originales' => $lecturasOriginales->count(),
@@ -560,6 +592,85 @@ class CamadaController extends Controller
         } else {
             return "tb_peso_{$tipoEstirpe}";
         }
+    }
+
+    /**
+     * Ajusta el porcentaje de descarte para broilers mixtos según la edad
+     * 
+     * @param float $porcentajeDescarte Porcentaje base de descarte (en decimal, ej: 0.20 para 20%)
+     * @param int $edadDias Edad de la camada en días
+     * @param string $tipoAve Tipo de ave
+     * @param string $sexaje Sexaje de la camada
+     * @return array ['inferior' => float, 'superior' => float] Porcentajes ajustados en decimal
+     */
+    private function ajustarPorcentajeDescarte(float $porcentajeDescarte, int $edadDias, string $tipoAve, string $sexaje): array
+    {
+        // Normalizar valores para comparación
+        $tipoAve = strtolower(trim($tipoAve ?? ''));
+        $sexaje = strtolower(trim($sexaje ?? ''));
+
+        // Solo aplicar ajuste para broilers mixtos
+        if ($tipoAve !== 'broilers' || $sexaje !== 'mixto') {
+            return [
+                'inferior' => $porcentajeDescarte,
+                'superior' => $porcentajeDescarte
+            ];
+        }
+
+        // Tabla de ajustes según edad para broilers mixtos
+        $ajustesPorEdad = [
+            ['min' => 0,  'max' => 7,  'menos' => 0, 'mas' => 0],
+            ['min' => 8,  'max' => 14, 'menos' => 1, 'mas' => 1],
+            ['min' => 15, 'max' => 21, 'menos' => 2, 'mas' => 3],
+            ['min' => 22, 'max' => 28, 'menos' => 3, 'mas' => 5],
+            ['min' => 29, 'max' => 35, 'menos' => 4, 'mas' => 7],
+            ['min' => 36, 'max' => 42, 'menos' => 5, 'mas' => 9],
+            ['min' => 43, 'max' => 49, 'menos' => 6, 'mas' => 10],
+            ['min' => 50, 'max' => 56, 'menos' => 7, 'mas' => 11],
+        ];
+
+        // Buscar el rango de edad correspondiente
+        $ajuste = null;
+        foreach ($ajustesPorEdad as $rango) {
+            if ($edadDias >= $rango['min'] && $edadDias <= $rango['max']) {
+                $ajuste = $rango;
+                break;
+            }
+        }
+
+        // Si no encuentra rango específico, usar el último (para edades > 56)
+        if ($ajuste === null && $edadDias > 56) {
+            $ajuste = ['menos' => 7, 'mas' => 11];
+        }
+
+        // Si no hay ajuste, usar porcentaje original
+        if ($ajuste === null) {
+            return [
+                'inferior' => $porcentajeDescarte,
+                'superior' => $porcentajeDescarte
+            ];
+        }
+
+        // Convertir porcentaje base a porcentaje (ej: 0.20 -> 20)
+        $porcentajeBase = $porcentajeDescarte * 100;
+
+        // Calcular porcentajes ajustados
+        $porcentajeInferior = ($porcentajeBase + $ajuste['menos']) / 100;
+        $porcentajeSuperior = ($porcentajeBase + $ajuste['mas']) / 100;
+
+        Log::info("Ajuste descarte broilers mixtos", [
+            'edad_dias' => $edadDias,
+            'porcentaje_original' => $porcentajeBase . '%',
+            'ajuste_menos' => $ajuste['menos'] . '%',
+            'ajuste_mas' => $ajuste['mas'] . '%',
+            'porcentaje_inferior_final' => ($porcentajeInferior * 100) . '%',
+            'porcentaje_superior_final' => ($porcentajeSuperior * 100) . '%'
+        ]);
+
+        return [
+            'inferior' => $porcentajeInferior,
+            'superior' => $porcentajeSuperior
+        ];
     }
 
     private function getPesoReferenciaOptimizado(array $camadaData, int $edadDias): float
@@ -656,6 +767,7 @@ class CamadaController extends Controller
 
     /**
      * Calcula el peso medio de un dispositivo en un rango de días
+     * Incluye ajuste automático de descarte para broilers mixtos según edad
      *
      * @param  Request  $request
      * @param  int      $dispId     ID del dispositivo
@@ -680,6 +792,7 @@ class CamadaController extends Controller
         $porcentajeDescarte = $request->has('porcentajeDescarte')
             ? (float)$request->query('porcentajeDescarte') / 100
             : 0.20;
+
         Log::info("calcularPesoMedioPorRango start — dispositivo={$dispId}, fecha_inicio={$fechaInicio}, fecha_fin={$fechaFin}, coef={$coef}");
 
         // 2. Cargar el dispositivo para obtener su número de serie
@@ -694,6 +807,7 @@ class CamadaController extends Controller
 
         $pesosTotales = collect();
         $resumenPorDia = [];
+        $detalleAjustesPorDia = []; // ✅ NUEVO: Para mostrar ajustes aplicados cada día
 
         foreach ($period as $dia) {
             $fecha = $dia->format('Y-m-d');
@@ -723,6 +837,14 @@ class CamadaController extends Controller
             // 6. Peso ideal de referencia
             $pesoRef = $this->getPesoReferencia($camada, $edadDias);
 
+            // ✅ NUEVO: Ajustar porcentaje de descarte para broilers mixtos según edad
+            $porcentajesAjustados = $this->ajustarPorcentajeDescarte(
+                $porcentajeDescarte,
+                $edadDias,
+                $camada->tipo_ave ?? '',
+                $camada->sexaje ?? ''
+            );
+
             // 7. Lecturas del dispositivo ese día (usar número de serie)
             // Importante: Asegurarse de que no hay ambigüedad en esta consulta
             $lecturas = EntradaDato::where('id_dispositivo', $serie)
@@ -731,8 +853,16 @@ class CamadaController extends Controller
                 ->get()
                 ->map(fn($e) => (float)$e->valor);
 
+            // ✅ USAR PORCENTAJES AJUSTADOS
             $consideradas = $lecturas
-                ->filter(fn($v) => $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= $porcentajeDescarte)
+                ->filter(function ($v) use ($pesoRef, $porcentajesAjustados) {
+                    if ($pesoRef <= 0) return false;
+
+                    $dentroDeLimiteInferior = (($pesoRef - $v) / $pesoRef) <= $porcentajesAjustados['inferior'];
+                    $dentroDeLimiteSuperior = (($v - $pesoRef) / $pesoRef) <= $porcentajesAjustados['superior'];
+
+                    return $dentroDeLimiteInferior && $dentroDeLimiteSuperior;
+                })
                 ->values();
 
             // 9. Media global de no descartadas
@@ -752,13 +882,44 @@ class CamadaController extends Controller
                 : 0.0;
 
             if ($aceptadas->count() > 0) {
+                // ✅ Verificar si se aplicó ajuste para este día
+                $ajusteAplicado = ($camada->tipo_ave ?? '') === 'broilers' &&
+                    ($camada->sexaje ?? '') === 'mixto';
+
                 // Añadir al resumen diario
                 $resumenPorDia[] = [
                     'fecha' => $fecha,
                     'peso_medio' => $pesoMedio,
                     'lecturas_aceptadas' => $aceptadas->count(),
                     'lecturas_totales' => $lecturas->count(),
+                    'lecturas_consideradas' => $consideradas->count(),
+                    'lecturas_descartadas' => $lecturas->count() - $consideradas->count(),
+                    'peso_referencia' => $pesoRef,
+                    'edad_dias' => $edadDias,
+                    // ✅ INFORMACIÓN DE AJUSTE
+                    'ajuste_descarte' => [
+                        'aplicado' => $ajusteAplicado,
+                        'porcentaje_original' => round($porcentajeDescarte * 100, 1) . '%',
+                        'porcentaje_inferior' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                        'porcentaje_superior' => round($porcentajesAjustados['superior'] * 100, 1) . '%'
+                    ]
                 ];
+
+                // ✅ Guardar detalle de ajustes si se aplicó
+                if ($ajusteAplicado) {
+                    $detalleAjustesPorDia[] = [
+                        'fecha' => $fecha,
+                        'edad_dias' => $edadDias,
+                        'porcentaje_original' => round($porcentajeDescarte * 100, 1),
+                        'porcentaje_inferior_ajustado' => round($porcentajesAjustados['inferior'] * 100, 1),
+                        'porcentaje_superior_ajustado' => round($porcentajesAjustados['superior'] * 100, 1),
+                        'incremento_inferior' => round(($porcentajesAjustados['inferior'] - $porcentajeDescarte) * 100, 1),
+                        'incremento_superior' => round(($porcentajesAjustados['superior'] - $porcentajeDescarte) * 100, 1),
+                        'lecturas_antes_filtro' => $lecturas->count(),
+                        'lecturas_despues_filtro' => $consideradas->count(),
+                        'lecturas_descartadas_por_ajuste' => $lecturas->count() - $consideradas->count()
+                    ];
+                }
 
                 // Añadir a la colección para el cálculo global
                 $pesosTotales = $pesosTotales->merge($aceptadas);
@@ -769,6 +930,23 @@ class CamadaController extends Controller
         $pesoMedioGlobal = $pesosTotales->count()
             ? round($pesosTotales->avg(), 2)
             : 0.0;
+
+        // ✅ Calcular estadísticas de ajustes aplicados
+        $estadisticasAjustes = [
+            'dias_con_ajuste' => count($detalleAjustesPorDia),
+            'dias_sin_ajuste' => count($resumenPorDia) - count($detalleAjustesPorDia),
+            'total_dias_procesados' => count($resumenPorDia),
+            'porcentaje_dias_con_ajuste' => count($resumenPorDia) > 0
+                ? round((count($detalleAjustesPorDia) / count($resumenPorDia)) * 100, 1)
+                : 0,
+            'ajuste_promedio_inferior' => count($detalleAjustesPorDia) > 0
+                ? round(collect($detalleAjustesPorDia)->avg('incremento_inferior'), 1)
+                : 0,
+            'ajuste_promedio_superior' => count($detalleAjustesPorDia) > 0
+                ? round(collect($detalleAjustesPorDia)->avg('incremento_superior'), 1)
+                : 0,
+            'lecturas_descartadas_por_ajuste_total' => collect($detalleAjustesPorDia)->sum('lecturas_descartadas_por_ajuste')
+        ];
 
         Log::info("calcularPesoMedioPorRango end — Peso medio global: {$pesoMedioGlobal}, días con datos: " . count($resumenPorDia));
 
@@ -783,6 +961,27 @@ class CamadaController extends Controller
             'total_lecturas_procesadas' => $pesosTotales->count(),
             'dias_con_datos' => count($resumenPorDia),
             'resumen_diario' => $resumenPorDia,
+            // ✅ NUEVA INFORMACIÓN SOBRE AJUSTES
+            'configuracion_descarte' => [
+                'porcentaje_base' => round($porcentajeDescarte * 100, 1) . '%',
+                'coeficiente_homogeneidad' => $coef,
+                'ajuste_automatico_broilers_mixtos' => true
+            ],
+            'estadisticas_ajustes' => $estadisticasAjustes,
+            'detalle_ajustes_por_dia' => $detalleAjustesPorDia,
+            // ✅ Información adicional para análisis
+            'analisis_global' => [
+                'total_lecturas_consideradas' => collect($resumenPorDia)->sum('lecturas_consideradas'),
+                'total_lecturas_originales' => collect($resumenPorDia)->sum('lecturas_totales'),
+                'total_lecturas_descartadas' => collect($resumenPorDia)->sum('lecturas_descartadas'),
+                'porcentaje_aprovechamiento' => collect($resumenPorDia)->sum('lecturas_totales') > 0
+                    ? round((collect($resumenPorDia)->sum('lecturas_consideradas') / collect($resumenPorDia)->sum('lecturas_totales')) * 100, 1)
+                    : 0,
+                'rango_edades_procesadas' => [
+                    'minima' => collect($resumenPorDia)->min('edad_dias'),
+                    'maxima' => collect($resumenPorDia)->max('edad_dias')
+                ]
+            ]
         ], Response::HTTP_OK);
     }
 
@@ -793,13 +992,12 @@ class CamadaController extends Controller
             'fecha_inicio'      => 'required|date|before_or_equal:fecha_fin',
             'fecha_fin'         => 'required|date',
             'coefHomogeneidad'  => 'nullable|numeric|min:0|max:1',
-            'porcentajeDescarte' => 'nullable|numeric|min:0|max:100', // ✅ VALIDACIÓN AÑADIDA
+            'porcentajeDescarte' => 'nullable|numeric|min:0|max:100',
         ]);
 
         $fi = $request->query('fecha_inicio');
         $ff = $request->query('fecha_fin');
         $coef = $request->has('coefHomogeneidad') ? (float)$request->query('coefHomogeneidad') : null;
-
 
         $porcentajeDescarte = $request->has('porcentajeDescarte')
             ? (float)$request->query('porcentajeDescarte') / 100  // Convertir de % a decimal
@@ -856,7 +1054,7 @@ class CamadaController extends Controller
             return Carbon::parse($item->fecha)->format('Y-m-d');
         });
 
-        // ✅ APLICAR AGRUPACIÓN POR CADA DÍA
+        // ✅ APLICAR AGRUPACIÓN POR CADA DÍA (COMENTADO - SIN AGRUPACIÓN)
         // $lecturasPorDiaAgrupadas = collect();
         // foreach ($lecturasPorDia as $fecha => $lecturasDia) {
         //     // Convertir a objetos con id_dispositivo para compatibilidad
@@ -893,6 +1091,17 @@ class CamadaController extends Controller
         $edadMaxima = $fechaInicioCamada->diffInDays($fin);
         $pesosReferencia = $this->getPesosReferenciaRango($camada, $edadMinima, $edadMaxima);
 
+        // ✅ NUEVO: Variables para estadísticas de ajustes
+        $totalAjustesAplicados = 0;
+        $detalleAjustesPorDia = [];
+        $estadisticasAjustes = [
+            'dias_con_ajuste' => 0,
+            'dias_sin_ajuste' => 0,
+            'ajuste_promedio_inferior' => 0,
+            'ajuste_promedio_superior' => 0,
+            'total_lecturas_descartadas_por_ajuste' => 0
+        ];
+
         // 7. Procesar cada día
         $result = [];
 
@@ -911,8 +1120,39 @@ class CamadaController extends Controller
                 'sexaje' => $camada->sexaje ?? ''
             ], $edadDias);
 
+            // ✅ NUEVO: Ajustar porcentaje de descarte para broilers mixtos según edad
+            $porcentajesAjustados = $this->ajustarPorcentajeDescarte(
+                $porcentajeDescarte,
+                $edadDias,
+                $camada->tipo_ave ?? '',
+                $camada->sexaje ?? ''
+            );
+
             Log::info("Peso referencia calculado: {$pesoRef}, Edad días: {$edadDias}");
 
+            // ✅ Verificar si se aplicó ajuste y registrar estadísticas
+            $ajusteAplicado = ($camada->tipo_ave ?? '') === 'broilers' &&
+                ($camada->sexaje ?? '') === 'mixto';
+
+            if ($ajusteAplicado) {
+                $estadisticasAjustes['dias_con_ajuste']++;
+                $totalAjustesAplicados++;
+
+                $incrementoInferior = ($porcentajesAjustados['inferior'] - $porcentajeDescarte) * 100;
+                $incrementoSuperior = ($porcentajesAjustados['superior'] - $porcentajeDescarte) * 100;
+
+                $detalleAjustesPorDia[] = [
+                    'fecha' => $fechaStr,
+                    'edad_dias' => $edadDias,
+                    'porcentaje_original' => round($porcentajeDescarte * 100, 1),
+                    'porcentaje_inferior_ajustado' => round($porcentajesAjustados['inferior'] * 100, 1),
+                    'porcentaje_superior_ajustado' => round($porcentajesAjustados['superior'] * 100, 1),
+                    'incremento_inferior' => round($incrementoInferior, 1),
+                    'incremento_superior' => round($incrementoSuperior, 1)
+                ];
+            } else {
+                $estadisticasAjustes['dias_sin_ajuste']++;
+            }
 
             if ($lecturasDia->isEmpty()) {
                 $result[] = [
@@ -928,18 +1168,45 @@ class CamadaController extends Controller
                         'lecturas_originales' => $lecturasOriginalesDia->count(),
                         'lecturas_agrupadas' => 0,
                         'reduccion' => $lecturasOriginalesDia->count()
+                    ],
+                    // ✅ NUEVA INFORMACIÓN DE AJUSTE
+                    'ajuste_descarte' => [
+                        'aplicado' => $ajusteAplicado,
+                        'edad_dias' => $edadDias,
+                        'porcentaje_original' => round($porcentajeDescarte * 100, 1) . '%',
+                        'porcentaje_inferior' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                        'porcentaje_superior' => round($porcentajesAjustados['superior'] * 100, 1) . '%'
                     ]
                 ];
                 continue;
             }
 
-            // Filtrar por ±20% del peso ideal
-            $consideradas = $lecturasDia->filter(function ($e) use ($pesoRef, $porcentajeDescarte) {
+            // Filtrar por ±% ajustado del peso ideal
+            $consideradas = $lecturasDia->filter(function ($e) use ($pesoRef, $porcentajesAjustados) {
+                if ($pesoRef <= 0) return false;
+
                 $v = (float)$e->valor;
-                return $pesoRef > 0 && abs($v - $pesoRef) / $pesoRef <= $porcentajeDescarte; // ✅ VARIABLE
+                $dentroDeLimiteInferior = (($pesoRef - $v) / $pesoRef) <= $porcentajesAjustados['inferior'];
+                $dentroDeLimiteSuperior = (($v - $pesoRef) / $pesoRef) <= $porcentajesAjustados['superior'];
+
+                return $dentroDeLimiteInferior && $dentroDeLimiteSuperior;
             });
 
             $valoresConsiderados = $consideradas->map(fn($e) => (float)$e->valor);
+
+            // ✅ Contar lecturas descartadas por ajuste
+            $lecturasDescartadasPorAjuste = $lecturasDia->count() - $consideradas->count();
+            if ($ajusteAplicado) {
+                $estadisticasAjustes['total_lecturas_descartadas_por_ajuste'] += $lecturasDescartadasPorAjuste;
+
+                // Actualizar el detalle del día con esta información
+                $indiceDetalle = count($detalleAjustesPorDia) - 1;
+                if ($indiceDetalle >= 0) {
+                    $detalleAjustesPorDia[$indiceDetalle]['lecturas_antes_filtro'] = $lecturasDia->count();
+                    $detalleAjustesPorDia[$indiceDetalle]['lecturas_despues_filtro'] = $consideradas->count();
+                    $detalleAjustesPorDia[$indiceDetalle]['lecturas_descartadas_por_ajuste'] = $lecturasDescartadasPorAjuste;
+                }
+            }
 
             if ($consideradas->isEmpty()) {
                 $result[] = [
@@ -955,6 +1222,15 @@ class CamadaController extends Controller
                         'lecturas_originales' => $lecturasOriginalesDia->count(),
                         'lecturas_agrupadas' => $lecturasDia->count(),
                         'reduccion' => $lecturasOriginalesDia->count() - $lecturasDia->count()
+                    ],
+                    // ✅ INFORMACIÓN DE AJUSTE
+                    'ajuste_descarte' => [
+                        'aplicado' => $ajusteAplicado,
+                        'edad_dias' => $edadDias,
+                        'porcentaje_original' => round($porcentajeDescarte * 100, 1) . '%',
+                        'porcentaje_inferior' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                        'porcentaje_superior' => round($porcentajesAjustados['superior'] * 100, 1) . '%',
+                        'lecturas_descartadas_por_ajuste' => $lecturasDescartadasPorAjuste
                     ]
                 ];
                 continue;
@@ -1018,7 +1294,14 @@ class CamadaController extends Controller
                     'edad_dias' => $edadDias,
                     'sexaje' => $camada->sexaje,
                     'tipo_ave' => $camada->tipo_ave,
-                    'tipo_estirpe' => $camada->tipo_estirpe
+                    'tipo_estirpe' => $camada->tipo_estirpe,
+                    'porcentajes_descarte' => [
+                        'original' => round($porcentajeDescarte * 100, 1) . '%',
+                        'inferior_ajustado' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                        'superior_ajustado' => round($porcentajesAjustados['superior'] * 100, 1) . '%',
+                        'ajuste_aplicado' => ($camada->tipo_ave ?? '') === 'broilers' &&
+                            ($camada->sexaje ?? '') === 'mixto'
+                    ]
                 ],
                 'info_agrupacion' => [
                     'lecturas_originales' => $lecturasOriginalesDia->count(),
@@ -1027,11 +1310,101 @@ class CamadaController extends Controller
                     'porcentaje_reduccion' => $lecturasOriginalesDia->count() > 0
                         ? round((($lecturasOriginalesDia->count() - $lecturasDia->count()) / $lecturasOriginalesDia->count()) * 100, 2)
                         : 0
+                ],
+                // ✅ INFORMACIÓN DETALLADA DE AJUSTE POR DÍA
+                'ajuste_descarte' => [
+                    'aplicado' => $ajusteAplicado,
+                    'edad_dias' => $edadDias,
+                    'porcentaje_original' => round($porcentajeDescarte * 100, 1) . '%',
+                    'porcentaje_inferior' => round($porcentajesAjustados['inferior'] * 100, 1) . '%',
+                    'porcentaje_superior' => round($porcentajesAjustados['superior'] * 100, 1) . '%',
+                    'lecturas_antes_ajuste' => $lecturasDia->count(),
+                    'lecturas_despues_ajuste' => $consideradas->count(),
+                    'lecturas_descartadas_por_ajuste' => $lecturasDescartadasPorAjuste,
+                    'porcentaje_aprovechamiento' => $lecturasDia->count() > 0
+                        ? round(($consideradas->count() / $lecturasDia->count()) * 100, 1)
+                        : 0
                 ]
             ];
         }
 
-        return response()->json($result, Response::HTTP_OK);
+        // ✅ Finalizar cálculo de estadísticas de ajustes
+        if ($estadisticasAjustes['dias_con_ajuste'] > 0) {
+            $estadisticasAjustes['ajuste_promedio_inferior'] = round(
+                collect($detalleAjustesPorDia)->avg('incremento_inferior'),
+                1
+            );
+            $estadisticasAjustes['ajuste_promedio_superior'] = round(
+                collect($detalleAjustesPorDia)->avg('incremento_superior'),
+                1
+            );
+        }
+
+        // ✅ Calcular estadísticas globales del rango
+        $totalDias = count($result);
+        $diasConDatos = collect($result)->filter(fn($dia) => count($dia['pesadas']) > 0)->count();
+        $totalLecturasOriginales = collect($result)->sum(fn($dia) => $dia['info_agrupacion']['lecturas_originales']);
+        $totalLecturasConsideradas = collect($result)->sum(fn($dia) => $dia['ajuste_descarte']['lecturas_despues_ajuste'] ?? 0);
+
+        return response()->json([
+            // ✅ INFORMACIÓN BÁSICA
+            'camada' => [
+                'id' => $camada->id_camada,
+                'tipo_ave' => $camada->tipo_ave,
+                'sexaje' => $camada->sexaje,
+                'tipo_estirpe' => $camada->tipo_estirpe,
+                'fecha_inicio' => $camada->fecha_hora_inicio
+            ],
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $numeroSerie
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fi,
+                'fecha_fin' => $ff,
+                'total_dias' => $totalDias,
+                'dias_con_datos' => $diasConDatos
+            ],
+
+            // ✅ CONFIGURACIÓN DE DESCARTE
+            'configuracion_descarte' => [
+                'porcentaje_base' => round($porcentajeDescarte * 100, 1) . '%',
+                'coeficiente_homogeneidad' => $coef,
+                'ajuste_automatico_broilers_mixtos' => true,
+                'ajuste_aplicado_a_camada' => ($camada->tipo_ave ?? '') === 'broilers' &&
+                    ($camada->sexaje ?? '') === 'mixto'
+            ],
+
+            // ✅ ESTADÍSTICAS DE AJUSTES
+            'estadisticas_ajustes' => array_merge($estadisticasAjustes, [
+                'total_dias_procesados' => $totalDias,
+                'porcentaje_dias_con_ajuste' => $totalDias > 0
+                    ? round(($estadisticasAjustes['dias_con_ajuste'] / $totalDias) * 100, 1)
+                    : 0
+            ]),
+
+            // ✅ ESTADÍSTICAS GLOBALES
+            'estadisticas_globales' => [
+                'total_lecturas_originales' => $totalLecturasOriginales,
+                'total_lecturas_consideradas' => $totalLecturasConsideradas,
+                'total_lecturas_descartadas' => $totalLecturasOriginales - $totalLecturasConsideradas,
+                'porcentaje_aprovechamiento_global' => $totalLecturasOriginales > 0
+                    ? round(($totalLecturasConsideradas / $totalLecturasOriginales) * 100, 1)
+                    : 0,
+                'impacto_ajuste_automatico' => $estadisticasAjustes['total_lecturas_descartadas_por_ajuste'],
+                'rango_edades_procesadas' => [
+                    'minima' => collect($result)->min('peso_referencia.edad_dias'),
+                    'maxima' => collect($result)->max('peso_referencia.edad_dias')
+                ]
+            ],
+
+            // ✅ DETALLE DE AJUSTES (para análisis detallado)
+            'detalle_ajustes_por_dia' => $detalleAjustesPorDia,
+
+            // ✅ DATOS PRINCIPALES (como siempre)
+            'datos' => $result
+
+        ], Response::HTTP_OK);
     }
 
 
