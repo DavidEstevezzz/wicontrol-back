@@ -101,6 +101,7 @@ Route::prefix('device-logs')->group(function () {
 Route::apiResource('dispositivos',    DispositivoController::class);
 Route::get('dispositivos/{id}/ubicacion', [DispositivoController::class, 'getGranjaYNave']);
 Route::get('dispositivos/{id}/camadas', [DispositivoController::class, 'getCamadas']);
+Route::patch('dispositivos/{id}/reset', [DispositivoController::class, 'programarReset']);
 
 
 Route::apiResource('empresas',        EmpresaController::class);

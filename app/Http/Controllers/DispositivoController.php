@@ -191,4 +191,44 @@ class DispositivoController extends Controller
         
         return response()->json($camadas);
     }
+
+    /**
+ * Programa un reset para el dispositivo
+ * @param int $id
+ * @return JsonResponse
+ */
+public function programarReset($id)
+{
+    try {
+        $dispositivo = Dispositivo::findOrFail($id);
+        
+        // Verificar que el dispositivo esté activo
+        if (!$dispositivo->alta) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede resetear un dispositivo inactivo'
+            ], 400);
+        }
+        
+        // Activar el flag de reset
+        $dispositivo->reset = true;
+        $dispositivo->save();
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Reset programado correctamente. Se ejecutará en el próximo heartbeat.',
+            'dispositivo' => [
+                'id' => $dispositivo->id_dispositivo,
+                'numero_serie' => $dispositivo->numero_serie,
+                'reset' => $dispositivo->reset
+            ]
+        ]);
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al programar el reset: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }
