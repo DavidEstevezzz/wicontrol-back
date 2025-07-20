@@ -136,11 +136,7 @@ class DeviceConfigurationController extends Controller
             $msg .= ">13,2," . $dispositivo->sensorSHT20_humedad;
         }
         
-        // Calcular frecuencia de envío en segundos
-        $freq = 30; // Por defecto 30 segundos
-        if ($dispositivo->tiempoEnvio != 30) {
-            $freq = $dispositivo->tiempoEnvio * 60; // Convertir minutos a segundos
-        }
+        $freq = $dispositivo->tiempoEnvio ?? 30;
         
         // Agregar hora y frecuencia
         // Usar timezone Europe/Paris como en el archivo original
