@@ -101,23 +101,27 @@ class CamadaController extends Controller
      * @return JsonResponse
      */
     public function attachDispositivo(int $camadaId, int $dispId): JsonResponse
-    {
-        // Buscar la camada y el dispositivo, o fallar con 404
-        $camada = Camada::findOrFail($camadaId);
-        $dispositivo = Dispositivo::findOrFail($dispId);
+{
+    $camada = Camada::findOrFail($camadaId);
+    $dispositivo = Dispositivo::findOrFail($dispId);
 
-        // Vincular si no existe ya
-        if (! $camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
-            $camada->dispositivos()->attach($dispId);
-            return response()->json([
-                'message' => "Dispositivo {$dispId} vinculado a camada {$camadaId}."
-            ], 201);
-        }
+    // Cerrar relaciones activas anteriores (soft delete)
+    DB::table('tb_relacion_camada_dispositivo')
+        ->where('id_dispositivo', $dispId)
+        ->whereNull('fecha_desvinculacion')
+        ->update(['fecha_desvinculacion' => now()->toDateString()]);
 
-        return response()->json([
-            'message' => 'El dispositivo ya está vinculado a esta camada.'
-        ], 200);
-    }
+    // Crear nueva relación
+    DB::table('tb_relacion_camada_dispositivo')->insert([
+        'id_camada' => $camadaId,
+        'id_dispositivo' => $dispId,
+        'fecha_vinculacion' => now()->toDateString()
+    ]);
+
+    return response()->json([
+        'message' => "Dispositivo {$dispId} vinculado a camada {$camadaId} con historial preservado."
+    ], 201);
+}
 
     /**
      * Desvincula un dispositivo de una camada.
@@ -127,22 +131,27 @@ class CamadaController extends Controller
      * @return JsonResponse
      */
     public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
-    {
-        $camada = Camada::findOrFail($camadaId);
-        $dispositivo = Dispositivo::findOrFail($dispId);
+{
+    $camada = Camada::findOrFail($camadaId);
+    $dispositivo = Dispositivo::findOrFail($dispId);
 
-        // Desvincular si existe
-        if ($camada->dispositivos()->where('id_dispositivo', $dispId)->exists()) {
-            $camada->dispositivos()->detach($dispId);
-            return response()->json([
-                'message' => "Dispositivo {$dispId} desvinculado de camada {$camadaId}."
-            ], 200);
-        }
+    // Marcar como desvinculado (no eliminar físicamente)
+    $updated = DB::table('tb_relacion_camada_dispositivo')
+        ->where('id_camada', $camadaId)
+        ->where('id_dispositivo', $dispId)
+        ->whereNull('fecha_desvinculacion')
+        ->update(['fecha_desvinculacion' => now()->toDateString()]);
 
+    if ($updated > 0) {
         return response()->json([
-            'message' => 'El dispositivo no está vinculado a esta camada.'
-        ], 404);
+            'message' => "Dispositivo {$dispId} desvinculado de camada {$camadaId}."
+        ], 200);
     }
+
+    return response()->json([
+        'message' => 'El dispositivo no está vinculado activamente a esta camada.'
+    ], 404);
+}
 
     /**
      * Devuelve un array de números de serie de los dispositivos vinculados.
@@ -1028,9 +1037,19 @@ class CamadaController extends Controller
             ->first();
 
         if (!$dispositivo) {
-            return response()->json([
-                'message' => "El dispositivo {$dispId} no pertenece a la camada {$camadaId}."
-            ], Response::HTTP_BAD_REQUEST);
+            // Verificar relación histórica
+            $relacionHistorica = DB::table('tb_relacion_camada_dispositivo')
+                ->where('id_camada', $camadaId)
+                ->where('id_dispositivo', $dispId)
+                ->exists();
+
+            if (!$relacionHistorica) {
+                return response()->json(['message' => "Nunca estuvo vinculado"], 400);
+            }
+
+            $numeroSerie = Dispositivo::findOrFail($dispId)->numero_serie;
+        } else {
+            $numeroSerie = $dispositivo->numero_serie;
         }
 
         $fechaInicioCamada = $camada->fecha_hora_inicio;
@@ -1443,7 +1462,13 @@ class CamadaController extends Controller
     {
         $camadas = Camada::where('codigo_granja', $numeroRega)
             ->orderBy('fecha_hora_inicio', 'desc')
-            ->get(['id_camada', 'nombre_camada']);
+            ->get([
+                'id_camada',
+                'nombre_camada',
+                'alta',                    // ✅ Para distinguir activas/históricas
+                'fecha_hora_inicio',       // ✅ Para referencia temporal
+                'fecha_hora_final'         // ✅ Para referencia temporal
+            ]);
 
         return response()->json($camadas, Response::HTTP_OK);
     }
@@ -1452,14 +1477,20 @@ class CamadaController extends Controller
     {
         $camada = Camada::findOrFail($camadaId);
 
-        // Seleccionamos sólo columnas de tb_dispositivo, prefijando la tabla
-        $dispositivos = $camada
-            ->dispositivos()
+        // Obtener TODOS los dispositivos (actuales + históricos)
+        $dispositivos = DB::table('tb_dispositivo as d')
+            ->join('tb_relacion_camada_dispositivo as rcd', 'd.id_dispositivo', '=', 'rcd.id_dispositivo')
+            ->where('rcd.id_camada', $camadaId)
             ->select([
-                'tb_dispositivo.id_dispositivo',
-                'tb_dispositivo.numero_serie',
-                'tb_dispositivo.ip_address'
+                'd.id_dispositivo',
+                'd.numero_serie',
+                'd.ip_address',
+                'rcd.fecha_vinculacion',
+                'rcd.fecha_desvinculacion',
+                // Indicar si es relación actual
+                DB::raw('CASE WHEN rcd.fecha_desvinculacion IS NULL THEN 1 ELSE 0 END as es_actual')
             ])
+            ->orderBy('rcd.fecha_vinculacion', 'desc')
             ->get();
 
         return response()->json($dispositivos, Response::HTTP_OK);

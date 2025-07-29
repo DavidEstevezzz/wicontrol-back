@@ -189,6 +189,7 @@ public function getDispositivosActivos(string $numeroRega): JsonResponse
         ->join('tb_camada', 'tb_relacion_camada_dispositivo.id_camada', '=', 'tb_camada.id_camada')
         ->where('tb_camada.codigo_granja', $numeroRega)
         ->where('tb_camada.alta', 1)
+        ->whereNull('rcd.fecha_desvinculacion')
         ->select([
             'tb_dispositivo.id_dispositivo',
             'tb_dispositivo.numero_serie',
