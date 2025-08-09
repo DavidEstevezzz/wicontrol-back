@@ -111,10 +111,10 @@ public function getDispositivosDisponiblesByGranja(string $codigoGranja): JsonRe
         ], Response::HTTP_NOT_FOUND);
     }
 
-    // Obtener todos los dispositivos de la granja
-    $todosDispositivos = Dispositivo::join('tb_instalacion', 'tb_dispositivo.id_dispositivo', '=', 'tb_instalacion.id_dispositivo')
-        ->join('tb_granja', 'tb_instalacion.numero_rega', '=', 'tb_granja.numero_rega')
-        ->where('tb_granja.numero_rega', $codigoGranja)
+    // Obtener todos los dispositivos de la granja usando la relación correcta:
+    // Dispositivo -> Instalacion -> Granja
+    $todosDispositivos = Dispositivo::join('tb_instalacion', 'tb_dispositivo.id_instalacion', '=', 'tb_instalacion.id_instalacion')
+        ->where('tb_instalacion.numero_rega', $codigoGranja)
         ->select([
             'tb_dispositivo.id_dispositivo',
             'tb_dispositivo.numero_serie',
