@@ -53,7 +53,10 @@ export default function TemperaturaHumedadView({
     const [mostrarAlertasHumedad, setMostrarAlertasHumedad] = useState(false);
     const [soloAlertasActivasHumedad, setSoloAlertasActivasHumedad] = useState(false);
     const [indicesData, setIndicesData] = useState(null);
-
+    const [fechaLimites, setFechaLimites] = useState({
+        inicio: null,
+        fin: null
+    });
 
     // Estado para el tema (claro/oscuro)
     const [isDarkMode, setIsDarkMode] = useState(false);
@@ -193,6 +196,27 @@ export default function TemperaturaHumedadView({
                 .finally(() => setLoading(false));
         }
     }, [selectedCamada, propCamadaInfo, isEmbedded]);
+
+    // Establecer límites de fecha válidos según la información de la camada
+    useEffect(() => {
+        const info = isEmbedded ? (propCamadaInfo || camadaInfo) : camadaInfo;
+        if (info && (info.fecha_hora_inicio || info.fecha_hora_final)) {
+            const normalize = (str) => {
+                if (!str) return null;
+                const d = new Date(str);
+                if (!isNaN(d.getTime())) {
+                    return d.toISOString().slice(0, 10);
+                }
+                return str.split('T')[0].split(' ')[0];
+            };
+            setFechaLimites({
+                inicio: normalize(info.fecha_hora_inicio),
+                fin: normalize(info.fecha_hora_final)
+            });
+        } else {
+            setFechaLimites({ inicio: null, fin: null });
+        }
+    }, [selectedCamada, propCamadaInfo, camadaInfo, isEmbedded]);
 
     // 5. Función para cargar dispositivos de la camada seleccionada
     // 5. Función para cargar dispositivos de la camada seleccionada con verificación de acceso
@@ -554,6 +578,53 @@ export default function TemperaturaHumedadView({
         </div>
     );
 
+    // ---------- Validación de fechas ----------
+    const handleFechaActualChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        setFechaActual(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
+    };
+
+    const handleFechaInicioChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha de inicio no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha de inicio no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        if (fechaFin && newFecha > fechaFin) {
+            setError(`❌ La fecha de inicio no puede ser posterior a la fecha de fin (${fechaFin})`);
+            return;
+        }
+        setFechaInicio(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
+    };
+
+    const handleFechaFinChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha de fin no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha de fin no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        if (fechaInicio && newFecha < fechaInicio) {
+            setError(`❌ La fecha de fin no puede ser anterior a la fecha de inicio (${fechaInicio})`);
+            return;
+        }
+        setFechaFin(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
+    };
 
     // 9. Función para analizar datos según la pestaña activa
     const analizarDatosRango = useCallback(() => {
@@ -3103,7 +3174,9 @@ export default function TemperaturaHumedadView({
                                                 type="date"
                                                 className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                                 value={fechaActual}
-                                                onChange={(e) => setFechaActual(e.target.value)}
+                                                onChange={(e) => handleFechaActualChange(e.target.value)}
+                                                min={fechaLimites.inicio || undefined}
+                                                max={fechaLimites.fin || undefined}
                                                 disabled={loading}
                                             />
                                         </div>
@@ -3164,16 +3237,18 @@ export default function TemperaturaHumedadView({
                                                     type="date"
                                                     className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                                     value={fechaInicio}
-                                                    onChange={(e) => setFechaInicio(e.target.value)}
-                                                    max={fechaFin}
+                                                    onChange={(e) => handleFechaInicioChange(e.target.value)}
+                                                    min={fechaLimites.inicio || undefined}
+                                                    max={fechaLimites.fin ? (fechaLimites.fin < fechaFin ? fechaLimites.fin : fechaFin) : fechaFin}
                                                     disabled={loading}
                                                 />
                                                 <input
                                                     type="date"
                                                     className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                                     value={fechaFin}
-                                                    onChange={(e) => setFechaFin(e.target.value)}
+                                                    onChange={(e) => handleFechaFinChange(e.target.value)}
                                                     min={fechaInicio}
+                                                    max={fechaLimites.fin || undefined}
                                                     disabled={loading}
                                                 />
                                             </div>

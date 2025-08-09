@@ -239,7 +239,10 @@ export default function PesadasCamadaView({
     const [selectedDeviceForDaily, setSelectedDeviceForDaily] = useState('todos');
     const [availableDevicesForDaily, setAvailableDevicesForDaily] = useState([]);
     const [nivelRestriccion, setNivelRestriccion] = useState('medio'); // 'alto', 'medio', 'bajo'
-
+    const [fechaLimites, setFechaLimites] = useState({
+        inicio: null,
+        fin: null
+    });
 
 
     // ———————————————————————————————————————————————————
@@ -369,6 +372,27 @@ export default function PesadasCamadaView({
             loadReferenceData();
         }
     }, [camadaInfo]);
+
+    // Establecer límites de fecha válidos según la información de la camada
+    useEffect(() => {
+        const info = isEmbedded ? (propCamadaInfo || camadaInfo) : camadaInfo;
+        if (info && (info.fecha_hora_inicio || info.fecha_hora_final)) {
+            const normalize = (str) => {
+                if (!str) return null;
+                const d = new Date(str);
+                if (!isNaN(d.getTime())) {
+                    return d.toISOString().slice(0, 10);
+                }
+                return str.split('T')[0].split(' ')[0];
+            };
+            setFechaLimites({
+                inicio: normalize(info.fecha_hora_inicio),
+                fin: normalize(info.fecha_hora_final)
+            });
+        } else {
+            setFechaLimites({ inicio: null, fin: null });
+        }
+    }, [selectedCamada, propCamadaInfo, camadaInfo, isEmbedded]);
 
     const extractDevicesFromDailyData = (pesadasData) => {
         if (!pesadasData || !pesadasData.listado_pesos) return [];
@@ -1273,6 +1297,54 @@ export default function PesadasCamadaView({
                 setError(prevError);
             }
         }, 3000);
+    };
+
+    // --------- Validación de fechas ---------
+    const handleFechaChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        setFecha(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
+    };
+
+    const handleFechaInicioRangeChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha de inicio no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha de inicio no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        if (fechaFinRange && newFecha > fechaFinRange) {
+            setError(`❌ La fecha de inicio no puede ser posterior a la fecha de fin (${fechaFinRange})`);
+            return;
+        }
+        setFechaInicioRange(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
+    };
+
+    const handleFechaFinRangeChange = (newFecha) => {
+        if (fechaLimites.inicio && newFecha < fechaLimites.inicio) {
+            setError(`❌ La fecha de fin no puede ser anterior al inicio de la camada (${fechaLimites.inicio})`);
+            return;
+        }
+        if (fechaLimites.fin && newFecha > fechaLimites.fin) {
+            setError(`❌ La fecha de fin no puede ser posterior al final de la camada (${fechaLimites.fin})`);
+            return;
+        }
+        if (fechaInicioRange && newFecha < fechaInicioRange) {
+            setError(`❌ La fecha de fin no puede ser anterior a la fecha de inicio (${fechaInicioRange})`);
+            return;
+        }
+        setFechaFinRange(newFecha);
+        if (error.startsWith('❌ La fecha')) setError('');
     };
 
 
@@ -4732,8 +4804,9 @@ export default function PesadasCamadaView({
                                     type="date"
                                     className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                     value={fecha}
-                                    onChange={e => setFecha(e.target.value)}
-                                    disabled={loading}
+                                    onChange={e => handleFechaChange(e.target.value)}
+                                    min={fechaLimites.inicio || undefined}
+                                    max={fechaLimites.fin || undefined} disabled={loading}
                                 />
                             </div>
                             <div>
@@ -4799,8 +4872,9 @@ export default function PesadasCamadaView({
                                 type="date"
                                 className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                 value={fecha}
-                                onChange={e => setFecha(e.target.value)}
-                                disabled={loading}
+                                onChange={e => handleFechaChange(e.target.value)}
+                                min={fechaLimites.inicio || undefined}
+                                max={fechaLimites.fin || undefined} disabled={loading}
                             />
                         </div>
 
@@ -5015,8 +5089,9 @@ export default function PesadasCamadaView({
                                 type="date"
                                 className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                 value={fechaInicioRange}
-                                onChange={e => setFechaInicioRange(e.target.value)}
-                                max={fechaFinRange}
+                                onChange={e => handleFechaInicioRangeChange(e.target.value)}
+                                min={fechaLimites.inicio || undefined}
+                                max={fechaLimites.fin ? (fechaLimites.fin < fechaFinRange ? fechaLimites.fin : fechaFinRange) : fechaFinRange}
                                 disabled={loading}
                             />
                         </div>
@@ -5030,8 +5105,9 @@ export default function PesadasCamadaView({
                                 type="date"
                                 className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
                                 value={fechaFinRange}
-                                onChange={e => setFechaFinRange(e.target.value)}
+                                onChange={e => handleFechaFinRangeChange(e.target.value)}
                                 min={fechaInicioRange}
+                                max={fechaLimites.fin || undefined}
                                 disabled={loading}
                             />
                         </div>

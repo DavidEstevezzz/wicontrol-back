@@ -18,7 +18,8 @@ import {
   faChevronDown,
   faChevronUp,
   faTachometerAlt,
-  faMicrochip
+  faMicrochip,
+  faBuilding
 } from '@fortawesome/free-solid-svg-icons';
 
 export default function Aside() {
@@ -62,6 +63,8 @@ export default function Aside() {
     { path: '/profile', label: 'Perfil', icon: faUser, access: true },
     { path: '/users', label: 'Usuarios', icon: faUsers, access: isAdmin },
     { path: '/dispositivos', label: 'Dispositivos', icon: faMicrochip, access: isAdmin },
+        { path: '/empresas', label: 'Empresas', icon: faBuilding, access: isAdmin },
+
 
   ];
 

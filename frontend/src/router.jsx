@@ -16,6 +16,7 @@ import ActividadAvesView from './views/ActividadAvesView';
 import MonitoreoLuzView from './views/MonitoreoLuzView';
 import Dispositivos from './views/Dispositivos';
 import DeviceLogsMonitoring from './views/DeviceLogsMonitoring';
+import Empresas from './views/Empresas';
 
 const router = createBrowserRouter([
   {
@@ -37,6 +38,10 @@ const router = createBrowserRouter([
       {
         path: '/dispositivos',
         element: <ProtectedRoute element={<Dispositivos />} allowedRoles={['SuperMaster', 'Admin']} />
+      },
+      {
+        path: '/empresas',
+        element: <ProtectedRoute element={<Empresas />} allowedRoles={['SuperMaster', 'Admin']} />
       },
       {
         path: '/register',
