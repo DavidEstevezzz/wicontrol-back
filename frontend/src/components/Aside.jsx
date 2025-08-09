@@ -19,7 +19,8 @@ import {
   faChevronUp,
   faTachometerAlt,
   faMicrochip,
-  faBuilding
+  faBuilding,
+  faLayerGroup
 } from '@fortawesome/free-solid-svg-icons';
 
 export default function Aside() {
@@ -63,7 +64,9 @@ export default function Aside() {
     { path: '/profile', label: 'Perfil', icon: faUser, access: true },
     { path: '/users', label: 'Usuarios', icon: faUsers, access: isAdmin },
     { path: '/dispositivos', label: 'Dispositivos', icon: faMicrochip, access: isAdmin },
-        { path: '/empresas', label: 'Empresas', icon: faBuilding, access: isAdmin },
+    { path: '/empresas', label: 'Empresas', icon: faBuilding, access: isAdmin },
+    { path: '/camadas', label: 'Camadas', icon: faLayerGroup, access: isAdmin },
+
 
 
   ];
@@ -80,8 +83,8 @@ export default function Aside() {
                   {item.isDropdown ? (
                     <div>
                       <div className={`flex items-center rounded-lg ${isDashboardActive
-                          ? 'bg-blue-500 text-white'
-                          : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
+                        ? 'bg-blue-500 text-white'
+                        : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
                         }`}>
                         {/* Enlace a Dashboard */}
                         <Link
@@ -91,7 +94,7 @@ export default function Aside() {
                           <FontAwesomeIcon icon={item.icon} className="mr-3" />
                           <span>{item.label}</span>
                         </Link>
-                        
+
                         {/* Botón para desplegar submenú */}
                         <button
                           onClick={() => setDashboardOpen(!dashboardOpen)}
@@ -109,8 +112,8 @@ export default function Aside() {
                               <Link
                                 to={child.path}
                                 className={`flex items-center p-2 rounded-lg ${location.pathname === child.path
-                                    ? 'bg-blue-500 text-white'
-                                    : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
+                                  ? 'bg-blue-500 text-white'
+                                  : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
                                   }`}
                               >
                                 <FontAwesomeIcon icon={child.icon} className="mr-3" />
@@ -125,8 +128,8 @@ export default function Aside() {
                     <Link
                       to={item.path}
                       className={`flex items-center p-2 rounded-lg ${location.pathname === item.path
-                          ? 'bg-blue-500 text-white'
-                          : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
+                        ? 'bg-blue-500 text-white'
+                        : `hover:bg-gray-100 ${darkMode ? 'hover:text-gray-800' : ''}`
                         }`}
                     >
                       <FontAwesomeIcon icon={item.icon} className="mr-3" />
