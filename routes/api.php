@@ -80,9 +80,9 @@ Route::get('dispositivos/{dispId}/temperatura-cama-grafica-alertas', [CamadaCont
 Route::get('/configure.php', [DeviceConfigurationController::class, 'configure']);
 Route::get('/receive.php', [DeviceDataReceiverController::class, 'receive']);
 Route::get('/Receive.php', [DeviceDataReceiverController::class, 'receive']);
-Route::get('calibrate',           [CalibrationController::class,'calibrate']);
-Route::post('calibrate/get-step', [CalibrationController::class,'getStep']);
-Route::post('calibrate/send-step',[CalibrationController::class,'sendStep']);
+Route::get('calibrate',           [CalibrationController::class, 'calibrate']);
+Route::post('calibrate/get-step', [CalibrationController::class, 'getStep']);
+Route::post('calibrate/send-step', [CalibrationController::class, 'sendStep']);
 Route::get('/heartbeat.php', [HeartbeatController::class, 'heartbeat']);
 Route::get('/Heartbeat.php', [HeartbeatController::class, 'heartbeat']);
 
@@ -117,6 +117,20 @@ Route::post('/granjas/peso', [GranjaController::class, 'getPesoPorGranja']);
 Route::get('granjas/{numeroRega}/dispositivos-activos', [GranjaController::class, 'getDispositivosActivos'])
     ->name('granjas.dispositivos-activos');
 Route::apiResource('instalaciones',   InstalacionController::class);
+
+
+Route::get('granjas/{codigoGranja}/dispositivos-disponibles', [CamadaController::class, 'getDispositivosDisponiblesByGranja'])
+    ->name('granjas.dispositivos-disponibles');
+
+Route::get('camadas/{camadaId}/dispositivos-vinculados', [CamadaController::class, 'getDispositivosVinculadosByCamada'])
+    ->name('camadas.dispositivos-vinculados');
+
+Route::post('camadas/{camadaId}/dispositivos/{dispId}/attach', [CamadaController::class, 'attachDispositivo'])
+    ->name('camadas.attach-dispositivo');
+
+Route::post('camadas/{camadaId}/dispositivos/{dispId}/detach', [CamadaController::class, 'detachDispositivo'])
+    ->name('camadas.detach-dispositivo');
+
 
 Route::apiResource('peso-cobb',       PesoCobbController::class);
 Route::get('peso-cobb/edad/{edad}', [PesoCobbController::class, 'getPesoByEdad']);
