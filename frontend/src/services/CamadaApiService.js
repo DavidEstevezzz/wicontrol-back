@@ -99,6 +99,25 @@ class CamadaApiService {
         return response.data;
     }
 
+
+    /**
+     * Cierra una camada: actualiza su fecha de finalización y
+     * desvincula todos los dispositivos activos.
+     * @param {number|string} id
+     */
+    async closeCamada(id) {
+        // Establecer fecha de finalización de la camada
+        await this.updateCamada(id, { fecha_hora_final: new Date().toISOString() });
+        // Obtener dispositivos vinculados actualmente
+        const dispositivos = await this.getDispositivosByCamada(id);
+        await Promise.all(
+            dispositivos
+                .filter(d => !d.fecha_desvinculacion)
+                .map(d => this.detachDispositivo(id, d.id_dispositivo))
+        );
+    }
+
+
     /**
   * Obtiene el resumen de pesadas y el listado con estado
   * @param {number|string} camadaId
@@ -398,6 +417,76 @@ class CamadaApiService {
             query
         );
         return response.data;
+    }
+
+    /**
+ * Obtiene dispositivos disponibles para vincular a una camada de una granja específica
+ * @param {string} codigoGranja - Código de la granja
+ * @returns {Promise<Array>} Array de dispositivos disponibles
+ */
+    async getDispositivosDisponiblesByGranja(codigoGranja) {
+        try {
+            const response = await BaseApiService.get(
+                `${API_URL}/api/granjas/${codigoGranja}/dispositivos-disponibles`
+            );
+            return response.data.dispositivos || [];
+        } catch (error) {
+            console.error('Error obteniendo dispositivos disponibles:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Obtiene dispositivos vinculados activamente a una camada específica
+     * @param {number} camadaId - ID de la camada
+     * @returns {Promise<Array>} Array de dispositivos vinculados
+     */
+    async getDispositivosVinculadosByCamada(camadaId) {
+        try {
+            const response = await BaseApiService.get(
+                `${API_URL}/api/camadas/${camadaId}/dispositivos-vinculados`
+            );
+            return response.data.dispositivos || [];
+        } catch (error) {
+            console.error('Error obteniendo dispositivos vinculados:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Vincula un dispositivo a una camada
+     * @param {number} camadaId - ID de la camada
+     * @param {number} dispositivoId - ID del dispositivo
+     * @returns {Promise<Object>} Respuesta de la vinculación
+     */
+    async attachDispositivo(camadaId, dispositivoId) {
+        try {
+            const response = await BaseApiService.post(
+                `${API_URL}/api/camadas/${camadaId}/dispositivos/${dispositivoId}/attach`
+            );
+            return response.data;
+        } catch (error) {
+            console.error('Error vinculando dispositivo:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Desvincula un dispositivo de una camada
+     * @param {number} camadaId - ID de la camada
+     * @param {number} dispositivoId - ID del dispositivo
+     * @returns {Promise<Object>} Respuesta de la desvinculación
+     */
+    async detachDispositivo(camadaId, dispositivoId) {
+        try {
+            const response = await BaseApiService.post(
+                `${API_URL}/api/camadas/${camadaId}/dispositivos/${dispositivoId}/detach`
+            );
+            return response.data;
+        } catch (error) {
+            console.error('Error desvinculando dispositivo:', error);
+            throw error;
+        }
     }
 
 }

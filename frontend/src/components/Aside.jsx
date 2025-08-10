@@ -20,6 +20,7 @@ import {
   faTachometerAlt,
   faMicrochip,
   faBuilding,
+  faWarehouse,
   faLayerGroup
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -66,6 +67,8 @@ export default function Aside() {
     { path: '/dispositivos', label: 'Dispositivos', icon: faMicrochip, access: isAdmin },
     { path: '/empresas', label: 'Empresas', icon: faBuilding, access: isAdmin },
     { path: '/camadas', label: 'Camadas', icon: faLayerGroup, access: isAdmin },
+    { path: '/granjas', label: 'Granjas', icon: faWarehouse, access: isAdmin },
+
 
 
 

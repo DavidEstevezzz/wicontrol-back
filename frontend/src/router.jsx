@@ -17,6 +17,10 @@ import MonitoreoLuzView from './views/MonitoreoLuzView';
 import Dispositivos from './views/Dispositivos';
 import DeviceLogsMonitoring from './views/DeviceLogsMonitoring';
 import Empresas from './views/Empresas';
+import Camadas from './views/Camadas';
+import Granjas from './views/Granjas';
+
+
 
 const router = createBrowserRouter([
   {
@@ -39,9 +43,17 @@ const router = createBrowserRouter([
         path: '/dispositivos',
         element: <ProtectedRoute element={<Dispositivos />} allowedRoles={['SuperMaster', 'Admin']} />
       },
+       {
+        path: '/granjas',
+        element: <ProtectedRoute element={<Granjas />} allowedRoles={['SuperMaster', 'Admin']} />
+      },
       {
         path: '/empresas',
         element: <ProtectedRoute element={<Empresas />} allowedRoles={['SuperMaster', 'Admin']} />
+      },
+      {
+        path: '/camadas',
+        element: <ProtectedRoute element={<Camadas />} allowedRoles={['SuperMaster', 'Admin']} />
       },
       {
         path: '/register',
