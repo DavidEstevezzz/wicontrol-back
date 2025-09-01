@@ -175,6 +175,7 @@ public function getByEmpresa(int $empresa): JsonResponse
 
 /**
  * Obtiene todos los dispositivos activos vinculados a camadas activas de una granja específica.
+ * Solo incluye dispositivos que no han sido desvinculados (fecha_desvinculacion IS NULL).
  *
  * @param  string  $numeroRega
  * @return JsonResponse
@@ -184,17 +185,16 @@ public function getDispositivosActivos(string $numeroRega): JsonResponse
     // Validar que la granja existe
     $granja = Granja::where('numero_rega', $numeroRega)->firstOrFail();
 
-    // Usar JOIN explícitos para evitar ambigüedad
-    $dispositivos = Dispositivo::join('tb_relacion_camada_dispositivo', 'tb_dispositivo.id_dispositivo', '=', 'tb_relacion_camada_dispositivo.id_dispositivo')
-        ->join('tb_camada', 'tb_relacion_camada_dispositivo.id_camada', '=', 'tb_camada.id_camada')
+    // Usar alias 'rcd' para tb_relacion_camada_dispositivo y filtrar por fecha_desvinculacion
+    $dispositivos = Dispositivo::join('tb_relacion_camada_dispositivo as rcd', 'tb_dispositivo.id_dispositivo', '=', 'rcd.id_dispositivo')
+        ->join('tb_camada', 'rcd.id_camada', '=', 'tb_camada.id_camada')
         ->where('tb_camada.codigo_granja', $numeroRega)
         ->where('tb_camada.alta', 1)
-        ->whereNull('rcd.fecha_desvinculacion')
+        ->whereNull('rcd.fecha_desvinculacion') // ✅ Ahora el alias 'rcd' está correctamente definido
         ->select([
             'tb_dispositivo.id_dispositivo',
             'tb_dispositivo.numero_serie',
             'tb_dispositivo.ip_address'
-            // Añade otros campos si es necesario
         ])
         ->distinct()
         ->get();
