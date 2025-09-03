@@ -778,7 +778,7 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
         $porcentajeBase = $porcentajeDescarte * 100;
 
         // Calcular porcentajes ajustados
-        $porcentajeInferior = ($porcentajeBase + $ajuste['menos']) / 100;
+        $porcentajeInferior = $porcentajeDescarte;
         $porcentajeSuperior = ($porcentajeBase + $ajuste['mas']) / 100;
 
         Log::info("Ajuste descarte broilers mixtos", [

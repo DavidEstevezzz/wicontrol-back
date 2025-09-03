@@ -36,6 +36,7 @@ class Granja extends Model
         'numero_naves',
         'disp_naves',
         'foto',
+        'responsable',
     ];
 
     // Relaciones
