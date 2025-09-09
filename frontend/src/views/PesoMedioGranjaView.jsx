@@ -847,18 +847,23 @@ export default function PesoMedioGranjaView({
 
         // Crear un trace por cada dispositivo
         return pesosMediosData.map(dispositivo => {
-            // Datos reales
-            const datosReales = dispositivo.resumen_diario.map(d => ({
-                fecha: d.fecha,
-                peso: d.peso_medio
-            }));
+            // Datos reales - ORDENAR CRONOLÓGICAMENTE
+            const datosReales = dispositivo.resumen_diario
+                .map(d => ({
+                    fecha: d.fecha,
+                    peso: d.peso_medio
+                }))
+                .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)); // ORDENAMIENTO AGREGADO
 
-            // Datos de proyección si existen
+            // Datos de proyección si existen - ORDENAR CRONOLÓGICAMENTE
             const datosProyeccion = dispositivo.proyeccion ?
-                dispositivo.proyeccion.map(p => ({
-                    fecha: p.fecha,
-                    peso: p.peso_medio
-                })) : [];
+                dispositivo.proyeccion
+                    .map(p => ({
+                        fecha: p.fecha,
+                        peso: p.peso_medio
+                    }))
+                    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)) // ORDENAMIENTO AGREGADO
+                : [];
 
             // Crear trace para datos reales
             const traceReal = {
@@ -875,34 +880,28 @@ export default function PesoMedioGranjaView({
                     size: 8,
                     line: {
                         color: isDarkMode ? theme.bg : 'white',
-                        width: 2
+                        width: 1.5
                     }
                 },
-                hovertemplate: 'Fecha: %{x}<br>Peso: %{y:.2f} g<extra>' + dispositivo.nombreDispositivo + '</extra>',
-                showlegend: true // Forzar que siempre se muestre en la leyenda
+                hovertemplate: 'Fecha: %{x}<br>Peso medio: %{y:.2f} g<extra>' +
+                    dispositivo.nombreDispositivo + '</extra>'
             };
 
-            // Si hay proyecciones y se deben mostrar
+            // Si hay proyección, crear trace adicional
             if (mostrarProyeccion && datosProyeccion.length > 0) {
-                // Último punto real para conectar con proyección
-                const ultimoPuntoReal = datosReales[datosReales.length - 1];
-
-                // Crear trace para datos de proyección
                 const traceProyeccion = {
                     type: 'scatter',
                     mode: 'lines+markers',
-                    name: `${dispositivo.nombreDispositivo} (proyección)`,
-                    x: [ultimoPuntoReal.fecha, ...datosProyeccion.map(d => d.fecha)],
-                    y: [ultimoPuntoReal.peso, ...datosProyeccion.map(d => d.peso)],
+                    name: dispositivo.nombreDispositivo + ' (proyección)',
+                    x: datosProyeccion.map(d => d.fecha),
+                    y: datosProyeccion.map(d => d.peso),
                     line: {
-                        color: theme.proyeccion,
-                        width: 2.5,
-                        dash: 'dash'
+                        width: 2,
+                        dash: 'dash',
+                        shape: 'spline'
                     },
                     marker: {
-                        symbol: 'diamond',
-                        size: 8,
-                        color: theme.proyeccion,
+                        size: 6,
                         line: {
                             color: isDarkMode ? theme.bg : 'white',
                             width: 1.5
