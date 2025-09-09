@@ -928,6 +928,31 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
         $fin = Carbon::parse($fechaFin);
         $period = CarbonPeriod::create($inicio, $fin);
 
+        // 4. Prefetch camadas y lecturas para evitar consultas por día
+        $camadas = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
+            ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
+            ->where('tb_camada.alta', 1)
+            ->where('tb_camada.fecha_hora_inicio', '<=', $fechaFin)
+            ->where(function ($query) use ($fechaInicio) {
+                $query->whereNull('tb_camada.fecha_hora_final')
+                    ->orWhere('tb_camada.fecha_hora_final', '>=', $fechaInicio);
+            })
+            ->select('tb_camada.*')
+            ->get();
+
+        $lecturasPorDia = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', 2)
+            ->whereBetween('fecha', [$inicio->copy()->startOfDay(), $fin->copy()->endOfDay()])
+            ->get()
+            ->map(function ($e) {
+                return [
+                    'fecha' => Carbon::parse($e->fecha)->format('Y-m-d'),
+                    'valor' => (float) $e->valor,
+                ];
+            })
+            ->groupBy('fecha')
+            ->map(fn ($items) => collect($items)->pluck('valor'));
+
         $pesosTotales = collect();
         $resumenPorDia = [];
         $detalleAjustesPorDia = []; // ✅ NUEVO: Para mostrar ajustes aplicados cada día
@@ -936,18 +961,12 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
             $fecha = $dia->format('Y-m-d');
             Log::info("Procesando día: {$fecha}");
 
-            // 4. Obtener camada asociada activa para este dispositivo en la fecha dada
-            // Aquí está el problema - vamos a usar JOINs explícitos para evitar ambigüedad
-            $camada = Camada::join('tb_relacion_camada_dispositivo', 'tb_camada.id_camada', '=', 'tb_relacion_camada_dispositivo.id_camada')
-                ->where('tb_relacion_camada_dispositivo.id_dispositivo', $dispId)
-                ->where('tb_camada.alta', 1)
-                ->where('tb_camada.fecha_hora_inicio', '<=', $fecha)
-                ->where(function ($query) use ($fecha) {
-                    $query->whereNull('tb_camada.fecha_hora_final')
-                        ->orWhere('tb_camada.fecha_hora_final', '>=', $fecha);
-                })
-                ->select('tb_camada.*')
-                ->first();
+             // Buscar camada activa en memoria
+            $camada = $camadas->first(function ($c) use ($fecha) {
+                $inicioCamada = Carbon::parse($c->fecha_hora_inicio)->format('Y-m-d');
+                $finCamada = $c->fecha_hora_final ? Carbon::parse($c->fecha_hora_final)->format('Y-m-d') : null;
+                return $inicioCamada <= $fecha && (is_null($finCamada) || $finCamada >= $fecha);
+            });
 
             if (!$camada) {
                 Log::info("No hay camada activa para el dispositivo en la fecha {$fecha}");
@@ -968,13 +987,8 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
                 $camada->sexaje ?? ''
             );
 
-            // 7. Lecturas del dispositivo ese día (usar número de serie)
-            // Importante: Asegurarse de que no hay ambigüedad en esta consulta
-            $lecturas = EntradaDato::where('id_dispositivo', $serie)
-                ->whereDate('fecha', $fecha)
-                ->where('id_sensor', 2)
-                ->get()
-                ->map(fn($e) => (float)$e->valor);
+            // 7. Lecturas del dispositivo ese día (usar datos prefiltrados)
+            $lecturas = $lecturasPorDia->get($fecha, collect());
 
             // ✅ USAR PORCENTAJES AJUSTADOS
             $consideradas = $lecturas
