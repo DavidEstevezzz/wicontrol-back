@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Empresa;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Symfony\Component\HttpFoundation\Response;
+use Exception;
+
 
 class EmpresaController extends Controller
 {
@@ -96,6 +100,39 @@ class EmpresaController extends Controller
         Empresa::findOrFail($id)->delete();
         return response()->json(null, 204);
     }
+
+    public function getUsuarios(int $empresaId): JsonResponse
+{
+    try {
+        // Verificar que la empresa existe
+        $empresa = Empresa::findOrFail($empresaId);
+        
+        // Obtener usuarios relacionados con esta empresa a través de la tabla pivot
+        $usuarios = $empresa->usuarios()
+            ->select(['id', 'nombre', 'apellidos', 'alias_usuario', 'email', 'dni', 'usuario_tipo', 'alta'])
+            ->where('alta', 1) // Solo usuarios activos
+            ->orderBy('nombre')
+            ->orderBy('apellidos')
+            ->get();
+
+        return response()->json([
+            'empresa_id' => $empresaId,
+            'empresa_nombre' => $empresa->nombre_empresa,
+            'total_usuarios' => $usuarios->count(),
+            'usuarios' => $usuarios
+        ], Response::HTTP_OK);
+        
+    } catch (ModelNotFoundException $e) {
+        return response()->json([
+            'error' => 'Empresa no encontrada'
+        ], Response::HTTP_NOT_FOUND);
+    } catch (Exception $e) {
+        return response()->json([
+            'error' => 'Error al obtener usuarios de la empresa',
+            'message' => $e->getMessage()
+        ], Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}
 
     
 }
