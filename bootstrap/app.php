@@ -35,5 +35,23 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        // ESTA ES LA CONFIGURACIÓN QUE FALTA
+        
+        // Configurar el reporte de todas las excepciones
+        $exceptions->report(function (Throwable $exception) {
+            // Esto hará que todas las excepciones se registren en el log por defecto
+            logger()->error('Excepción capturada:', [
+                'message' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'trace' => $exception->getTraceAsString(),
+            ]);
+        });
+
+        // Opcional: También puedes configurar renders personalizados
+        $exceptions->render(function (Throwable $exception, $request) {
+            // Si quieres personalizar las respuestas de error
+            // Por ahora dejamos que Laravel maneje esto automáticamente
+            return null;
+        });
     })->create();
