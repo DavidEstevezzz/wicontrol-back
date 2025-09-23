@@ -3,6 +3,9 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Illuminate\Support\Facades\Log;
+
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -35,29 +38,17 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        // Log ALL exceptions explicitly
-        $exceptions->report(function (Throwable $exception) {
-            \Illuminate\Support\Facades\Log::error('Exception occurred: ' . $exception->getMessage(), [
+        // CRÍTICO: Remover el handler personalizado de report que podría estar interfiriendo
+        // $exceptions->report(function (Throwable $exception) { ... }); // COMENTAR ESTA SECCIÓN
+        
+        // Solo mantener el render personalizado para APIs
+        $exceptions->render(function (Throwable $exception, $request) {
+            // Log manual para debugging (opcional)
+            Log::error('Exception rendered', [
                 'exception' => get_class($exception),
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
                 'line' => $exception->getLine(),
-                'trace' => $exception->getTraceAsString(),
-                'url' => request()->fullUrl() ?? 'N/A',
-                'method' => request()->method() ?? 'N/A',
-                'ip' => request()->ip() ?? 'N/A',
-                'user_agent' => request()->userAgent() ?? 'N/A',
-                'timestamp' => now()->toDateTimeString()
-            ]);
-        });
-
-        // Custom rendering for API errors
-        $exceptions->render(function (Throwable $exception, $request) {
-            // Log the render attempt
-            \Illuminate\Support\Facades\Log::info('Rendering exception response', [
-                'is_api' => $request->is('api/*'),
-                'expects_json' => $request->expectsJson(),
-                'exception' => get_class($exception)
             ]);
 
             if ($request->is('api/*') || $request->expectsJson()) {
