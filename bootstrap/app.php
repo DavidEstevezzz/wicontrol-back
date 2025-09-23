@@ -38,26 +38,26 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        // CRÍTICO: Remover el handler personalizado de report que podría estar interfiriendo
-        // $exceptions->report(function (Throwable $exception) { ... }); // COMENTAR ESTA SECCIÓN
-        
-        // Solo mantener el render personalizado para APIs
-        $exceptions->render(function (Throwable $exception, $request) {
-            // Log manual para debugging (opcional)
-            Log::error('Exception rendered', [
-                'exception' => get_class($exception),
-                'message' => $exception->getMessage(),
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-            ]);
+    
+    $exceptions->reportable(function (Throwable $e) {
+        // Esto se ejecuta ADEMÁS del logging automático, no en lugar de él
+        \Log::channel('single')->info('Información adicional de excepción', [
+            'url' => request()->fullUrl() ?? 'N/A',
+            'method' => request()->method() ?? 'N/A',
+            'ip' => request()->ip() ?? 'N/A',
+            'user_agent' => request()->userAgent() ?? 'N/A',
+        ]);
+    });
 
-            if ($request->is('api/*') || $request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Error interno del servidor',
-                    'error' => config('app.debug') ? $exception->getMessage() : 'Internal Server Error',
-                    'timestamp' => now()->toDateTimeString()
-                ], 500);
-            }
-        });
-    })->create();
+    // Mantener el render personalizado (esto está bien)
+    $exceptions->render(function (Throwable $exception, $request) {
+        if ($request->is('api/*') || $request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno del servidor',
+                'error' => config('app.debug') ? $exception->getMessage() : 'Internal Server Error',
+                'timestamp' => now()->toDateTimeString()
+            ], 500);
+        }
+    });
+})
