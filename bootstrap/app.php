@@ -4,8 +4,6 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 
-use Illuminate\Support\Facades\Log;
-
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -37,23 +35,38 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        // ESTA ES LA CONFIGURACIÓN QUE FALTA
-        
-        // Configurar el reporte de todas las excepciones
+        // Log ALL exceptions explicitly
         $exceptions->report(function (Throwable $exception) {
-             // Esto hará que todas las excepciones se registren en el stack, incluyendo laravel.log
-            Log::channel('stack')->error('Excepción capturada:', [
+            \Illuminate\Support\Facades\Log::error('Exception occurred: ' . $exception->getMessage(), [
+                'exception' => get_class($exception),
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
                 'line' => $exception->getLine(),
                 'trace' => $exception->getTraceAsString(),
+                'url' => request()->fullUrl() ?? 'N/A',
+                'method' => request()->method() ?? 'N/A',
+                'ip' => request()->ip() ?? 'N/A',
+                'user_agent' => request()->userAgent() ?? 'N/A',
+                'timestamp' => now()->toDateTimeString()
             ]);
         });
 
-        // Opcional: También puedes configurar renders personalizados
+        // Custom rendering for API errors
         $exceptions->render(function (Throwable $exception, $request) {
-            // Si quieres personalizar las respuestas de error
-            // Por ahora dejamos que Laravel maneje esto automáticamente
-            return null;
+            // Log the render attempt
+            \Illuminate\Support\Facades\Log::info('Rendering exception response', [
+                'is_api' => $request->is('api/*'),
+                'expects_json' => $request->expectsJson(),
+                'exception' => get_class($exception)
+            ]);
+
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error interno del servidor',
+                    'error' => config('app.debug') ? $exception->getMessage() : 'Internal Server Error',
+                    'timestamp' => now()->toDateTimeString()
+                ], 500);
+            }
         });
     })->create();
