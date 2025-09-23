@@ -11,10 +11,10 @@ class UsuarioController extends Controller
      * Mostrar listado de usuarios.
      */
     public function index()
-    {
-        $usuarios = Usuario::with('empresas')->paginate(15);
-        return response()->json($usuarios);
-    }
+{
+    $usuarios = Usuario::with('empresas')->get(); // Cambiado de paginate(15) a get()
+    return response()->json(['data' => $usuarios]); // Mantener la estructura 'data' para compatibilidad
+}
 
     /**
      * Almacenar un nuevo usuario.
