@@ -4,6 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 
+use Illuminate\Support\Facades\Log;
+
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -39,8 +41,8 @@ return Application::configure(basePath: dirname(__DIR__))
         
         // Configurar el reporte de todas las excepciones
         $exceptions->report(function (Throwable $exception) {
-            // Esto hará que todas las excepciones se registren en el log por defecto
-            logger()->error('Excepción capturada:', [
+             // Esto hará que todas las excepciones se registren en el stack, incluyendo laravel.log
+            Log::channel('stack')->error('Excepción capturada:', [
                 'message' => $exception->getMessage(),
                 'file' => $exception->getFile(),
                 'line' => $exception->getLine(),
