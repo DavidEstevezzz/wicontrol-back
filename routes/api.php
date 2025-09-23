@@ -24,6 +24,10 @@ use App\Http\Controllers\DeviceDataReceiverController;
 use App\Http\Controllers\CalibrationController;
 use App\Http\Controllers\HeartbeatController;
 use App\Http\Controllers\DeviceLogsController;
+use Illuminate\Support\Facades\Log;
+use Throwable;
+use Illuminate\Support\Facades\DB;
+
 
 
 /*
@@ -154,3 +158,115 @@ Route::get('/usuarios/{usuario}/empresas', [UsuarioController::class, 'getEmpres
 Route::get('/dashboard', [DashboardController::class, 'stats']);
 Route::get('/granjas/{numeroRega}/dashboard', [GranjaController::class, 'dashboard']);
 Route::get('/granjas/{numeroRega}/temperatura-media', [GranjaController::class, 'getTemperaturaMedia']);
+
+Route::get('/debug/test-logging', function() {
+    Log::info('TEST: Log de info directo');
+    Log::error('TEST: Log de error directo');
+    Log::debug('TEST: Log de debug directo');
+    Log::warning('TEST: Log de warning directo');
+    
+    Log::channel('single')->info('TEST: Log directo al canal single');
+    
+    return response()->json([
+        'message' => 'Logs enviados - revisa storage/logs/laravel.log',
+        'timestamp' => now(),
+        'log_channel_config' => config('logging.default'),
+        'log_level' => config('logging.channels.single.level'),
+        'storage_path' => storage_path('logs/laravel.log'),
+        'file_exists' => file_exists(storage_path('logs/laravel.log')),
+        'file_writable' => is_writable(storage_path('logs/')),
+        'file_size' => file_exists(storage_path('logs/laravel.log')) ? filesize(storage_path('logs/laravel.log')) : 'No existe'
+    ]);
+});
+
+// 2. Ruta para generar excepción y probar logging automático de errores
+Route::get('/debug/test-exception', function() {
+    // Primero loggeamos algo manual para confirmar que el sistema funciona
+    Log::info('ANTES de la excepción - este log debería aparecer');
+    
+    // Generar excepción que debería aparecer automáticamente en logs
+    throw new \Exception('Error de prueba para verificar logging automático - ' . now());
+});
+
+// 3. Ruta para verificar configuración detallada
+Route::get('/debug/logging-config', function() {
+    return response()->json([
+        'app_env' => config('app.env'),
+        'app_debug' => config('app.debug'),
+        'log_channel' => config('logging.default'),
+        'log_stack' => config('logging.channels.stack.channels'),
+        'log_level_env' => env('LOG_LEVEL'),
+        'log_channel_env' => env('LOG_CHANNEL'),
+        'log_stack_env' => env('LOG_STACK'),
+        'single_channel_config' => config('logging.channels.single'),
+        'storage_logs_exists' => is_dir(storage_path('logs')),
+        'storage_logs_writable' => is_writable(storage_path('logs')),
+        'laravel_log_exists' => file_exists(storage_path('logs/laravel.log')),
+        'laravel_log_writable' => file_exists(storage_path('logs/laravel.log')) ? is_writable(storage_path('logs/laravel.log')) : 'File does not exist',
+        'all_log_files' => array_map('basename', glob(storage_path('logs/*.log'))),
+        'current_time' => now(),
+        'timezone' => config('app.timezone')
+    ]);
+});
+
+// 4. Ruta para verificar los datos de la empresa (tu problema original)
+Route::get('/debug/empresa/{empresa}/pivot', function($empresaId) {
+    Log::info("DEBUG: Consultando empresa ID: {$empresaId}");
+    
+    $pivotData = DB::table('tb_relacion_usuario_empresa')
+        ->where('id_empresa', $empresaId)
+        ->get();
+    
+    Log::info("DEBUG: Encontrados " . $pivotData->count() . " registros en pivot");
+    
+    return response()->json([
+        'empresa_id' => $empresaId,
+        'pivot_data' => $pivotData,
+        'all_pivot_data' => DB::table('tb_relacion_usuario_empresa')->get(),
+        'empresa_exists' => DB::table('tb_empresa')->where('id', $empresaId)->exists(),
+        'usuarios_count' => DB::table('tb_usuario')->count(),
+        'empresa_data' => DB::table('tb_empresa')->where('id', $empresaId)->first()
+    ]);
+});
+
+// 5. Ruta para verificar directamente la relación Eloquent
+Route::get('/debug/empresa/{empresa}/usuarios-eloquent', function($empresaId) {
+    Log::info("DEBUG ELOQUENT: Consultando empresa ID: {$empresaId}");
+    
+    try {
+        $empresa = \App\Models\Empresa::findOrFail($empresaId);
+        Log::info("DEBUG: Empresa encontrada: " . $empresa->nombre_empresa);
+        
+        // Sin filtro alta
+        $usuariosSinFiltro = $empresa->usuarios()->get();
+        Log::info("DEBUG: Usuarios sin filtro: " . $usuariosSinFiltro->count());
+        
+        // Con filtro alta = 1
+        $usuariosConFiltro = $empresa->usuarios()->where('alta', 1)->get();
+        Log::info("DEBUG: Usuarios con filtro alta=1: " . $usuariosConFiltro->count());
+        
+        // Con filtro alta = 0  
+        $usuariosInactivos = $empresa->usuarios()->where('alta', 0)->get();
+        Log::info("DEBUG: Usuarios inactivos: " . $usuariosInactivos->count());
+        
+        return response()->json([
+            'empresa_id' => $empresaId,
+            'empresa_nombre' => $empresa->nombre_empresa,
+            'usuarios_sin_filtro' => $usuariosSinFiltro->count(),
+            'usuarios_con_filtro_alta_1' => $usuariosConFiltro->count(),
+            'usuarios_inactivos' => $usuariosInactivos->count(),
+            'usuarios_sin_filtro_data' => $usuariosSinFiltro,
+            'usuarios_con_filtro_data' => $usuariosConFiltro,
+            'sql_query' => $empresa->usuarios()->where('alta', 1)->toSql(),
+            'sql_bindings' => $empresa->usuarios()->where('alta', 1)->getBindings()
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error("DEBUG ERROR: " . $e->getMessage());
+        return response()->json([
+            'error' => $e->getMessage(),
+            'line' => $e->getLine(),
+            'file' => $e->getFile()
+        ], 500);
+    }
+});
