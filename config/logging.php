@@ -54,7 +54,10 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => explode(',', env('LOG_STACK', 'single')),
+            'channels' => array_values(array_unique(array_filter(array_merge(
+                ['single'],
+                array_map('trim', explode(',', (string) env('LOG_STACK', 'single')))
+            )))),
             'ignore_exceptions' => false,
         ],
 
@@ -74,22 +77,22 @@ return [
         ],
 
         'device_receiver' => [
-        'driver' => 'single',
-        'path' => storage_path('logs/logReceive.log'),
-        'level' => env('LOG_LEVEL', 'debug'),
-        'days' => 14,
-        'permission' => 0664,
-    ],
-    'calibration' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/logReceive.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'permission' => 0664,
+        ],
+        'calibration' => [
             'driver' => 'single',
             'path'   => storage_path('logs/calibration.log'),
             'level'  => 'debug',
         ],
         'heartbeat' => [
-        'driver' => 'single',
-        'path'   => storage_path('logs/heartbeat.log'),
-        'level'  => 'info',
-    ],
+            'driver' => 'single',
+            'path'   => storage_path('logs/heartbeat.log'),
+            'level'  => 'info',
+        ],
 
         'daily' => [
             'driver' => 'daily',
@@ -115,7 +118,7 @@ return [
             'handler_with' => [
                 'host' => env('PAPERTRAIL_URL'),
                 'port' => env('PAPERTRAIL_PORT'),
-                'connectionString' => 'tls://'.env('PAPERTRAIL_URL').':'.env('PAPERTRAIL_PORT'),
+                'connectionString' => 'tls://' . env('PAPERTRAIL_URL') . ':' . env('PAPERTRAIL_PORT'),
             ],
             'processors' => [PsrLogMessageProcessor::class],
         ],
