@@ -54,10 +54,7 @@ return [
 
         'stack' => [
             'driver' => 'stack',
-            'channels' => array_values(array_unique(array_filter(array_merge(
-                ['single'],
-                array_map('trim', explode(',', (string) env('LOG_STACK', 'single')))
-            )))),
+            'channels' => explode(',', env('LOG_STACK', 'single')),
             'ignore_exceptions' => false,
         ],
 
@@ -68,11 +65,11 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // CORREGIDO: Removidas las propiedades 'days' de los canales 'single'
         'device_configuration' => [
             'driver' => 'single',
             'path' => storage_path('logs/logConfigure.log'),
             'level' => env('LOG_LEVEL', 'debug'),
-            'days' => 14,
             'permission' => 0664,
         ],
 
@@ -80,18 +77,19 @@ return [
             'driver' => 'single',
             'path' => storage_path('logs/logReceive.log'),
             'level' => env('LOG_LEVEL', 'debug'),
-            'days' => 14,
             'permission' => 0664,
         ],
+
         'calibration' => [
             'driver' => 'single',
-            'path'   => storage_path('logs/calibration.log'),
-            'level'  => 'debug',
+            'path' => storage_path('logs/calibration.log'),
+            'level' => 'debug',
         ],
+
         'heartbeat' => [
             'driver' => 'single',
-            'path'   => storage_path('logs/heartbeat.log'),
-            'level'  => 'info',
+            'path' => storage_path('logs/heartbeat.log'),
+            'level' => 'info',
         ],
 
         'daily' => [
@@ -118,7 +116,7 @@ return [
             'handler_with' => [
                 'host' => env('PAPERTRAIL_URL'),
                 'port' => env('PAPERTRAIL_PORT'),
-                'connectionString' => 'tls://' . env('PAPERTRAIL_URL') . ':' . env('PAPERTRAIL_PORT'),
+                'connectionString' => 'tls://'.env('PAPERTRAIL_URL').':'.env('PAPERTRAIL_PORT'),
             ],
             'processors' => [PsrLogMessageProcessor::class],
         ],
