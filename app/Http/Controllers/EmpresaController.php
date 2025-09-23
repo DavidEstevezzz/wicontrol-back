@@ -104,51 +104,38 @@ class EmpresaController extends Controller
 
    public function getUsuarios(int $empresaId): JsonResponse
 {
-    // Logging manual para capturar TODO
-    Log::info("=== INICIO getUsuarios ===");
-    Log::info("Empresa ID recibido: " . $empresaId);
-    
     try {
-        // Verificar que la empresa existe
-        Log::info("Buscando empresa...");
         $empresa = Empresa::findOrFail($empresaId);
-        Log::info("Empresa encontrada: " . $empresa->nombre_empresa);
         
-        // Obtener usuarios relacionados
-        Log::info("Obteniendo usuarios relacionados...");
+        // ✅ CORREGIR: Especificar la tabla para la columna 'id'
         $usuarios = $empresa->usuarios()
-            ->select(['id', 'nombre', 'apellidos', 'alias_usuario', 'email', 'dni', 'usuario_tipo', 'alta'])
-            ->where('alta', 1)
-            ->orderBy('nombre')
-            ->orderBy('apellidos')
+            ->select([
+                'tb_usuario.id',           // ← CAMBIO: Especificar tabla
+                'tb_usuario.nombre', 
+                'tb_usuario.apellidos', 
+                'tb_usuario.alias_usuario', 
+                'tb_usuario.email', 
+                'tb_usuario.dni', 
+                'tb_usuario.usuario_tipo', 
+                'tb_usuario.alta'
+            ])
+            ->where('tb_usuario.alta', 1)  // ← CAMBIO: Especificar tabla también aquí
+            ->orderBy('tb_usuario.nombre')
+            ->orderBy('tb_usuario.apellidos')
             ->get();
-            
-        Log::info("Usuarios encontrados: " . $usuarios->count());
-        
-        $response = [
+
+        return response()->json([
             'empresa_id' => $empresaId,
             'empresa_nombre' => $empresa->nombre_empresa,
             'total_usuarios' => $usuarios->count(),
             'usuarios' => $usuarios
-        ];
-        
-        Log::info("Respuesta preparada correctamente");
-        return response()->json($response, Response::HTTP_OK);
+        ], Response::HTTP_OK);
         
     } catch (ModelNotFoundException $e) {
-        Log::error("ERROR: Empresa no encontrada - ID: " . $empresaId);
-        Log::error("Exception: " . $e->getMessage());
         return response()->json([
             'error' => 'Empresa no encontrada'
         ], Response::HTTP_NOT_FOUND);
-        
-    } catch (\Exception $e) {
-        Log::error("ERROR GRAVE en getUsuarios:");
-        Log::error("Mensaje: " . $e->getMessage());
-        Log::error("Archivo: " . $e->getFile());
-        Log::error("Línea: " . $e->getLine());
-        Log::error("Stack trace: " . $e->getTraceAsString());
-        
+    } catch (Exception $e) {
         return response()->json([
             'error' => 'Error al obtener usuarios de la empresa',
             'message' => $e->getMessage()
