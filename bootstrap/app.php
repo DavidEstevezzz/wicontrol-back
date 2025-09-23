@@ -6,7 +6,6 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Illuminate\Support\Facades\Log;
 
-
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -38,26 +37,25 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-    
-    $exceptions->reportable(function (Throwable $e) {
-        // Esto se ejecuta ADEMÁS del logging automático, no en lugar de él
-        \Log::channel('single')->info('Información adicional de excepción', [
-            'url' => request()->fullUrl() ?? 'N/A',
-            'method' => request()->method() ?? 'N/A',
-            'ip' => request()->ip() ?? 'N/A',
-            'user_agent' => request()->userAgent() ?? 'N/A',
-        ]);
-    });
+        $exceptions->reportable(function (Throwable $e) {
+            // Esto se ejecuta ADEMÁS del logging automático, no en lugar de él
+            Log::channel('single')->info('Información adicional de excepción', [
+                'url' => request()->fullUrl() ?? 'N/A',
+                'method' => request()->method() ?? 'N/A',
+                'ip' => request()->ip() ?? 'N/A',
+                'user_agent' => request()->userAgent() ?? 'N/A',
+            ]);
+        });
 
-    // Mantener el render personalizado (esto está bien)
-    $exceptions->render(function (Throwable $exception, $request) {
-        if ($request->is('api/*') || $request->expectsJson()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error interno del servidor',
-                'error' => config('app.debug') ? $exception->getMessage() : 'Internal Server Error',
-                'timestamp' => now()->toDateTimeString()
-            ], 500);
-        }
-    });
-})
+        // Mantener el render personalizado (esto está bien)
+        $exceptions->render(function (Throwable $exception, $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error interno del servidor',
+                    'error' => config('app.debug') ? $exception->getMessage() : 'Internal Server Error',
+                    'timestamp' => now()->toDateTimeString()
+                ], 500);
+            }
+        });
+    })->create(); 
