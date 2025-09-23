@@ -270,3 +270,17 @@ Route::get('/debug/empresa/{empresa}/usuarios-eloquent', function($empresaId) {
         ], 500);
     }
 });
+
+// Agregar al final de routes/api.php
+
+// Prueba de error 500 por división por cero
+Route::get('/test-500-error', function() {
+    $result = 10 / 0;
+    return response()->json(['result' => $result]);
+});
+
+// Prueba de error 500 por llamada a método en null
+Route::get('/test-500-null', function() {
+    $obj = null;
+    return $obj->metodoInexistente();
+});
