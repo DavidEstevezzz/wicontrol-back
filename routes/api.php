@@ -105,9 +105,11 @@ Route::patch('dispositivos/{id}/reset', [DispositivoController::class, 'programa
 
 
 Route::apiResource('empresas',        EmpresaController::class);
-Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])
-    ->name('empresas.granjas');
-Route::get('/empresas/{empresa}/usuarios', [EmpresaController::class, 'getUsuarios']);
+Route::get('empresas/{empresa}/usuarios', [EmpresaController::class, 'getUsuarios'])
+        ->name('empresas.usuarios');
+    
+    Route::get('empresas/{empresa}/granjas', [GranjaController::class, 'getByEmpresa'])
+        ->name('empresas.granjas');
 
 Route::apiResource('entradas-datos',  EntradaDatoController::class);
 
