@@ -471,9 +471,6 @@ export default function PesadasCamadaView({
     };
 
     const getEnhancedCardInfo = () => {
-        console.log('=== getEnhancedCardInfo ejecutándose ===');
-        console.log('camadaInfo:', camadaInfo);
-        console.log('propCamadaInfo:', propCamadaInfo);
         if (!camadaInfo && !propCamadaInfo) return null;
 
         const infoToUse = camadaInfo || propCamadaInfo;
@@ -815,16 +812,13 @@ export default function PesadasCamadaView({
                 porcentajeDescarte
             );
 
-            console.log('Respuesta completa del API:', response);
 
             // ✅ VERIFICACIÓN CRÍTICA: Extraer los datos correctamente
             if (response && response.datos && Array.isArray(response.datos)) {
                 setPesadasRangoData(response.datos);
-                console.log('✅ Datos extraídos correctamente:', response.datos);
             } else if (Array.isArray(response)) {
                 // Fallback por si el API devuelve directamente el array
                 setPesadasRangoData(response);
-                console.log('✅ Datos son directamente un array:', response);
             } else {
                 console.error('❌ Estructura de respuesta inesperada:', response);
                 console.error('❌ Tipo de response:', typeof response);
@@ -961,12 +955,6 @@ export default function PesadasCamadaView({
                 tipoEstirpeTabla = 'ross';
                 tipoEstirpeServicio = 'Ross';
             }
-            //console.log(`Tipo de ave: ${tipoAveServicio}, Tipo de estirpe: ${tipoEstirpeServicio}`);
-            // Construir el nombre del servicio y de la tabla
-            //const serviceName = `Peso${tipoAveServicio}${tipoEstirpeServicio}ApiService`;
-            //const tableName = `tb_peso_${tipoAveTabla}_${tipoEstirpeTabla}`;
-
-            //console.log(`Cargando datos de referencia para: ${serviceName} (${tableName})`);
 
             setLoadingReference(true);
             setError('');
@@ -991,7 +979,6 @@ export default function PesadasCamadaView({
                         apiService = PesoReproductoresRossApiService;
                         break;
                     case 'recrias_ross':
-                        console.log('✅ Usando PesoReproductoresRossApiService para recrias_ross');
 
                         apiService = PesoReproductoresRossApiService;
                         break;
@@ -1016,11 +1003,6 @@ export default function PesadasCamadaView({
             try {
                 const apiData = await apiService.getPesosReferencia();
 
-                // 🔍 DEBUG: Ver qué devuelve exactamente el servicio
-                console.log('🔍 DEBUG apiData completo:', apiData);
-                console.log('🔍 DEBUG apiData.length:', apiData?.length);
-                console.log('🔍 DEBUG primer elemento:', apiData?.[0]);
-                console.log('🔍 DEBUG keys del primer elemento:', Object.keys(apiData?.[0] || {}));
 
                 if (!apiData || apiData.length === 0) {
                     console.error('❌ No se recibieron datos de la API');
@@ -1031,8 +1013,6 @@ export default function PesadasCamadaView({
 
                 // Transformar los datos de la API al formato esperado por la aplicación
                 const transformedData = apiData.map(item => {
-                    console.log('🔍 DEBUG procesando item:', item);
-                    console.log('🔍 DEBUG keys disponibles:', Object.keys(item));
 
                     // ✅ ESTRUCTURA FLEXIBLE: Detectar qué campos están disponibles
                     const id = item.id || item.edad || 0;
@@ -1047,14 +1027,11 @@ export default function PesadasCamadaView({
                         item.hasOwnProperty('Machos') ||
                         item.hasOwnProperty('Hembras');
 
-                    console.log('🔍 DEBUG estructura simple (macho/hembras):', hasSimpleStructure);
-                    console.log('🔍 DEBUG estructura compleja (Mixto/Machos/Hembras):', hasComplexStructure);
 
                     let Mixto = 0, Machos = 0, Hembras = 0;
 
                     if (hasSimpleStructure) {
                         // ✅ ESTRUCTURA SIMPLE: Solo macho/hembras
-                        console.log('📊 Usando estructura SIMPLE');
 
                         Machos = item.macho || item.machos || 0;
                         Hembras = item.hembras || item.hembra || 0;
@@ -1068,11 +1045,9 @@ export default function PesadasCamadaView({
                             Mixto = Hembras;
                         }
 
-                        console.log(`📊 Valores extraídos - Machos: ${Machos}, Hembras: ${Hembras}, Mixto calculado: ${Mixto}`);
 
                     } else if (hasComplexStructure) {
                         // ✅ ESTRUCTURA COMPLEJA: Mixto/Machos/Hembras
-                        console.log('📊 Usando estructura COMPLEJA');
 
                         Mixto = item.mixto || item.Mixto || item.peso_mixto || 0;
                         Machos = item.machos || item.Machos || item.peso_machos || 0;
@@ -1081,10 +1056,8 @@ export default function PesadasCamadaView({
                         // Si Mixto está vacío pero tenemos Machos/Hembras, calcularlo
                         if (Mixto === 0 && Machos > 0 && Hembras > 0) {
                             Mixto = Math.round((Machos + Hembras) / 2);
-                            console.log(`📊 Mixto calculado como promedio: ${Mixto}`);
                         }
 
-                        console.log(`📊 Valores extraídos - Mixto: ${Mixto}, Machos: ${Machos}, Hembras: ${Hembras}`);
 
                     } else {
                         // ✅ ESTRUCTURA DESCONOCIDA: Intentar múltiples variantes
@@ -1116,23 +1089,17 @@ export default function PesadasCamadaView({
                         Hembras: Hembras
                     };
 
-                    console.log('✅ Item transformado:', transformedItem);
 
                     return transformedItem;
                 });
 
                 // ✅ DEBUG: Mostrar resumen de la transformación
-                console.log('📊 RESUMEN DE TRANSFORMACIÓN:');
-                console.log(`- Total items procesados: ${transformedData.length}`);
-                console.log(`- Primer item: `, transformedData[0]);
-                console.log(`- Último item: `, transformedData[transformedData.length - 1]);
 
                 // Verificar que tenemos datos válidos
                 const validItems = transformedData.filter(item =>
                     item.edad >= 0 && (item.Mixto > 0 || item.Machos > 0 || item.Hembras > 0)
                 );
 
-                console.log(`- Items con datos válidos: ${validItems.length}`);
 
                 if (validItems.length === 0) {
                     console.error('❌ No se encontraron items con datos válidos después de la transformación');
@@ -1155,18 +1122,14 @@ export default function PesadasCamadaView({
                 // Ordenar por edad para asegurar consistencia
                 transformedData.sort((a, b) => a.edad - b.edad);
 
-                console.log('✅ Datos finales ordenados:', transformedData.slice(0, 5)); // Mostrar los primeros 5
 
                 // Establecer los datos de referencia
                 setReferenceData(transformedData);
 
                 // 🔍 DEBUG: Ver datos transformados
-                console.log('🔍 DEBUG transformedData:', transformedData);
-                console.log('🔍 DEBUG primeros 3 transformados:', transformedData.slice(0, 3));
 
                 // Establecer los datos de referencia
                 setReferenceData(transformedData);
-                console.log('✅ referenceData establecido correctamente');
 
             } catch (apiError) {
                 console.error('❌ Error al obtener datos de la API:', apiError);
