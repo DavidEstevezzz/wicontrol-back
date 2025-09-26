@@ -477,29 +477,35 @@ export default function PesadasCamadaView({
         let consultedAge = null;
         let pesoObjetivo = null;
 
+        const fallbackAge = resolveConsultedAge();
+
         // ✅ PRIORIDAD 1: Usar peso_referencia del backend si está disponible
         if (pesadasData && pesadasData.peso_referencia) {
+            const backendAge = pesadasData.peso_referencia.edad_dias;
+            const isBackendAgeValid = Number.isFinite(backendAge) && backendAge >= 0;
+
             pesoObjetivo = pesadasData.peso_referencia.valor;
-            consultedAge = pesadasData.peso_referencia.edad_dias;
+            consultedAge = isBackendAgeValid ? backendAge : fallbackAge;
 
             console.log('✅ Usando peso_referencia del backend:', {
                 peso: pesoObjetivo,
-                edad: consultedAge,
+                edad_backend: backendAge,
+                edad_utilizada: consultedAge,
+                recalculada: !isBackendAgeValid,
                 tabla: pesadasData.peso_referencia.tabla_usada,
                 sexaje: pesadasData.peso_referencia.sexaje
             });
+
+            if (!isBackendAgeValid) {
+                console.warn('⚠️ Edad de backend inválida, usando calculateCamadaAge()', {
+                    backendAge,
+                    fallbackAge
+                });
+            }
         }
         // ✅ FALLBACK: Si no hay peso_referencia, usar el método anterior (para rango)
         else {
-            // Determinar qué fecha estamos consultando
-            if (pesadasData && fecha) {
-                consultedAge = calculateCamadaAge(new Date(fecha));
-            } else if (pesadasRangoData && pesadasRangoData.length > 0) {
-                const lastReading = pesadasRangoData[pesadasRangoData.length - 1];
-                consultedAge = calculateCamadaAge(new Date(lastReading.fecha));
-            } else {
-                consultedAge = calculateCamadaAge();
-            }
+            consultedAge = fallbackAge;
 
             // Obtener de referenceData (método anterior)
             if (referenceData && consultedAge !== null) {
@@ -1172,15 +1178,56 @@ export default function PesadasCamadaView({
 
 
     // Calcular la edad de la camada en días para una fecha específica
-    const calculateCamadaAge = (date = new Date()) => {
-        if (!camadaInfo || !camadaInfo.fecha_hora_inicio) return null;
+    function calculateCamadaAge(date = new Date()) {
+        if (!camadaInfo || !camadaInfo.fecha_hora_inicio) {
+            console.warn('[calculateCamadaAge] Información de camada incompleta', {
+                camadaInfo
+            });
+            return null;
+        }
 
         const startDate = new Date(camadaInfo.fecha_hora_inicio);
-        const diffTime = Math.abs(date - startDate);
+        if (isNaN(startDate.getTime())) {
+            console.error('[calculateCamadaAge] Fecha de inicio inválida', {
+                fecha_hora_inicio: camadaInfo.fecha_hora_inicio
+            });
+            return null;
+        }
+
+        const targetDate = date instanceof Date ? date : new Date(date);
+        if (isNaN(targetDate.getTime())) {
+            console.error('[calculateCamadaAge] Fecha objetivo inválida', { date });
+            return null;
+        }
+
+        const diffTime = Math.abs(targetDate - startDate);
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
+        console.log('[calculateCamadaAge] Calculando edad de camada', {
+            fechaObjetivo: targetDate,
+            fechaInicio: startDate,
+            edadCalculada: diffDays
+        });
+
         return diffDays;
-    };
+    }
+
+    function resolveConsultedAge() {
+        let targetDate = null;
+
+        if (fecha) {
+            targetDate = new Date(fecha);
+        } else if (pesadasRangoData && pesadasRangoData.length > 0) {
+            const lastReading = pesadasRangoData[pesadasRangoData.length - 1];
+            targetDate = new Date(lastReading.fecha);
+        }
+
+        if (targetDate && !isNaN(targetDate.getTime())) {
+            return calculateCamadaAge(targetDate);
+        }
+
+        return calculateCamadaAge();
+    }
 
     // Obtener el sexaje de la camada
     const getCamadaSexaje = () => {
