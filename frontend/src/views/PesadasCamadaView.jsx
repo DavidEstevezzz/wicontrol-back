@@ -1147,7 +1147,7 @@ export default function PesadasCamadaView({
 
 
     // Calcular la edad de la camada en días para una fecha específica
-    const calculateCamadaAge = (date = new Date()) => {
+    function calculateCamadaAge(date = new Date()) {
         if (!camadaInfo || !camadaInfo.fecha_hora_inicio) {
             console.warn('[calculateCamadaAge] Información de camada incompleta', {
                 camadaInfo
@@ -1155,37 +1155,7 @@ export default function PesadasCamadaView({
             return null;
         }
 
-        // Crear las fechas
         const startDate = new Date(camadaInfo.fecha_hora_inicio);
-
-        // DEPURACIÓN: Mostrar valores antes de normalizar
-        console.log('🔍 DEPURACIÓN calculateCamadaAge:');
-        console.log('- Fecha inicio original:', camadaInfo.fecha_hora_inicio);
-        console.log('- Fecha inicio parseada:', startDate.toString());
-        console.log('- Fecha target original:', date);
-        console.log('- Fecha target parseada:', targetDate.toString());
-        console.log('- Fecha target getTime():', targetDate.getTime());
-        console.log('- Fecha inicio getTime():', startDate.getTime());
-
-        // Verificar si las fechas son válidas
-        if (isNaN(startDate.getTime()) || isNaN(targetDate.getTime())) {
-            console.error('❌ Fechas inválidas detectadas');
-            return null;
-        }
-
-        // Normalizar ambas fechas a medianoche (00:00:00)
-        const normalizedStartDate = new Date(startDate);
-        const normalizedTargetDate = new Date(targetDate);
-
-        normalizedStartDate.setHours(0, 0, 0, 0);
-        normalizedTargetDate.setHours(0, 0, 0, 0);
-
-        // DEPURACIÓN: Mostrar valores después de normalizar
-        console.log('- Fecha inicio normalizada:', normalizedStartDate.toString());
-        console.log('- Fecha target normalizada:', normalizedTargetDate.toString());
-        console.log('- Diferencia en ms:', normalizedTargetDate.getTime() - normalizedStartDate.getTime());
-
-        // Calcular diferencia en días
         if (isNaN(startDate.getTime())) {
             console.error('[calculateCamadaAge] Fecha de inicio inválida', {
                 fecha_hora_inicio: camadaInfo.fecha_hora_inicio
@@ -1199,7 +1169,7 @@ export default function PesadasCamadaView({
             return null;
         }
 
-        const diffTime = Math.abs(targetDate - startDate); 
+        const diffTime = Math.abs(targetDate - startDate);
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
         console.log('[calculateCamadaAge] Calculando edad de camada', {
@@ -1208,18 +1178,11 @@ export default function PesadasCamadaView({
             edadCalculada: diffDays
         });
 
-        console.log('- Diferencia en días (antes de validar):', diffDays);
+        return diffDays;
+    }
 
-        // No permitir edades negativas - si la fecha consultada es anterior al inicio
-        const finalAge = Math.max(0, diffDays);
 
-        console.log('- Edad final calculada:', finalAge);
-        console.log('---');
-
-        return finalAge;
-    };
-
-     const resolveConsultedAge = () => {
+    const resolveConsultedAge = () => {
         let targetDate = null;
 
         if (fecha) {
