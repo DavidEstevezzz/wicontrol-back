@@ -471,35 +471,47 @@ export default function PesadasCamadaView({
     };
 
     const getEnhancedCardInfo = () => {
+        console.log('=== getEnhancedCardInfo ejecutándose ===');
+        console.log('camadaInfo:', camadaInfo);
+        console.log('propCamadaInfo:', propCamadaInfo);
         if (!camadaInfo && !propCamadaInfo) return null;
 
         const infoToUse = camadaInfo || propCamadaInfo;
         let consultedAge = null;
         let pesoObjetivo = null;
 
+        const fallbackAge = resolveConsultedAge();
+
+
         // ✅ PRIORIDAD 1: Usar peso_referencia del backend si está disponible
         if (pesadasData && pesadasData.peso_referencia) {
+
+            const backendAge = pesadasData.peso_referencia.edad_dias;
+            const isBackendAgeValid = Number.isFinite(backendAge) && backendAge >= 0;
+
             pesoObjetivo = pesadasData.peso_referencia.valor;
-            consultedAge = pesadasData.peso_referencia.edad_dias;
+            consultedAge = isBackendAgeValid ? backendAge : fallbackAge;
 
             console.log('✅ Usando peso_referencia del backend:', {
                 peso: pesoObjetivo,
-                edad: consultedAge,
+                edad_backend: backendAge,
+                edad_utilizada: consultedAge,
+                recalculada: !isBackendAgeValid,
                 tabla: pesadasData.peso_referencia.tabla_usada,
                 sexaje: pesadasData.peso_referencia.sexaje
             });
+
+            if (!isBackendAgeValid) {
+                console.warn('⚠️ Edad de backend inválida, usando calculateCamadaAge()', {
+                    backendAge,
+                    fallbackAge
+                });
+            }
         }
         // ✅ FALLBACK: Si no hay peso_referencia, usar el método anterior (para rango)
         else {
-            // Determinar qué fecha estamos consultando
-            if (pesadasData && fecha) {
-                consultedAge = calculateCamadaAge(new Date(fecha));
-            } else if (pesadasRangoData && pesadasRangoData.length > 0) {
-                const lastReading = pesadasRangoData[pesadasRangoData.length - 1];
-                consultedAge = calculateCamadaAge(new Date(lastReading.fecha));
-            } else {
-                consultedAge = calculateCamadaAge();
-            }
+            consultedAge = fallbackAge;
+
 
             // Obtener de referenceData (método anterior)
             if (referenceData && consultedAge !== null) {
@@ -1173,14 +1185,94 @@ export default function PesadasCamadaView({
 
     // Calcular la edad de la camada en días para una fecha específica
     const calculateCamadaAge = (date = new Date()) => {
-        if (!camadaInfo || !camadaInfo.fecha_hora_inicio) return null;
+        if (!camadaInfo || !camadaInfo.fecha_hora_inicio) {
+            console.warn('[calculateCamadaAge] Información de camada incompleta', {
+                camadaInfo
+            });
+            return null;
+        }
 
+        // Crear las fechas
         const startDate = new Date(camadaInfo.fecha_hora_inicio);
-        const diffTime = Math.abs(date - startDate);
+
+        // DEPURACIÓN: Mostrar valores antes de normalizar
+        console.log('🔍 DEPURACIÓN calculateCamadaAge:');
+        console.log('- Fecha inicio original:', camadaInfo.fecha_hora_inicio);
+        console.log('- Fecha inicio parseada:', startDate.toString());
+        console.log('- Fecha target original:', date);
+        console.log('- Fecha target parseada:', targetDate.toString());
+        console.log('- Fecha target getTime():', targetDate.getTime());
+        console.log('- Fecha inicio getTime():', startDate.getTime());
+
+        // Verificar si las fechas son válidas
+        if (isNaN(startDate.getTime()) || isNaN(targetDate.getTime())) {
+            console.error('❌ Fechas inválidas detectadas');
+            return null;
+        }
+
+        // Normalizar ambas fechas a medianoche (00:00:00)
+        const normalizedStartDate = new Date(startDate);
+        const normalizedTargetDate = new Date(targetDate);
+
+        normalizedStartDate.setHours(0, 0, 0, 0);
+        normalizedTargetDate.setHours(0, 0, 0, 0);
+
+        // DEPURACIÓN: Mostrar valores después de normalizar
+        console.log('- Fecha inicio normalizada:', normalizedStartDate.toString());
+        console.log('- Fecha target normalizada:', normalizedTargetDate.toString());
+        console.log('- Diferencia en ms:', normalizedTargetDate.getTime() - normalizedStartDate.getTime());
+
+        // Calcular diferencia en días
+        if (isNaN(startDate.getTime())) {
+            console.error('[calculateCamadaAge] Fecha de inicio inválida', {
+                fecha_hora_inicio: camadaInfo.fecha_hora_inicio
+            });
+            return null;
+        }
+
+        const targetDate = date instanceof Date ? date : new Date(date);
+        if (isNaN(targetDate.getTime())) {
+            console.error('[calculateCamadaAge] Fecha objetivo inválida', { date });
+            return null;
+        }
+
+        const diffTime = Math.abs(targetDate - startDate); 
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
-        return diffDays;
+        console.log('[calculateCamadaAge] Calculando edad de camada', {
+            fechaObjetivo: targetDate,
+            fechaInicio: startDate,
+            edadCalculada: diffDays
+        });
+
+        console.log('- Diferencia en días (antes de validar):', diffDays);
+
+        // No permitir edades negativas - si la fecha consultada es anterior al inicio
+        const finalAge = Math.max(0, diffDays);
+
+        console.log('- Edad final calculada:', finalAge);
+        console.log('---');
+
+        return finalAge;
     };
+
+     const resolveConsultedAge = () => {
+        let targetDate = null;
+
+        if (fecha) {
+            targetDate = new Date(fecha);
+        } else if (pesadasRangoData && pesadasRangoData.length > 0) {
+            const lastReading = pesadasRangoData[pesadasRangoData.length - 1];
+            targetDate = new Date(lastReading.fecha);
+        }
+
+        if (targetDate && !isNaN(targetDate.getTime())) {
+            return calculateCamadaAge(targetDate);
+        }
+
+        return calculateCamadaAge();
+    };
+
 
     // Obtener el sexaje de la camada
     const getCamadaSexaje = () => {
@@ -2837,6 +2929,240 @@ export default function PesadasCamadaView({
         }];
     };
 
+    const generateExcelPesadasIndividuales = async () => {
+        const filteredPesadas = getFilteredDailyPesadas();
+
+        if (!filteredPesadas || filteredPesadas.length === 0) {
+            setError('No hay pesadas disponibles para exportar');
+            return;
+        }
+
+        try {
+            const ExcelJS = await import('exceljs');
+            const workbook = new ExcelJS.Workbook();
+
+            // Configurar propiedades del documento
+            workbook.creator = 'Sistema de Gestión Avícola';
+            workbook.created = new Date();
+
+            // Crear hoja de cálculo
+            const worksheet = workbook.addWorksheet('Listado de Pesadas');
+
+            // Colores del tema
+            const colors = {
+                primary: '3B82F6',
+                success: '10B981',
+                danger: 'EF4444',
+                warning: 'F59E0B',
+                light: 'F8FAFC',
+                dark: '1F2937'
+            };
+
+            // ENCABEZADO DEL DOCUMENTO
+            const titleRow = worksheet.addRow(['LISTADO DETALLADO DE PESADAS']);
+            titleRow.getCell(1).font = { size: 16, bold: true, color: { argb: colors.dark } };
+            titleRow.getCell(1).alignment = { horizontal: 'center' };
+            worksheet.mergeCells('A1:F1'); // ✅ AMPLIADO: Cambié de E1 a F1 para nueva columna
+            titleRow.height = 30;
+
+            // ✅ NUEVO: Obtener información de la granja
+            const granjaSeleccionada = granjas.find(g => g.numero_rega === selectedGranja);
+            const nombreGranja = granjaSeleccionada ? granjaSeleccionada.nombre : selectedGranja;
+
+            // ✅ NUEVO: Calcular edad de la camada para la fecha consultada
+            const fechaConsultada = fecha ? new Date(fecha) : new Date();
+            const edadCamada = calculateCamadaAge ? Math.floor(calculateCamadaAge(fechaConsultada) || 0) : null;
+
+            // Información de la camada y granja (MEJORADA)
+            worksheet.addRow([]);
+
+            // Primera fila de información
+            const infoRow1 = worksheet.addRow([
+                'Granja:', nombreGranja,
+                '',
+                'Camada:', camadaInfo?.nombre_camada || 'N/A',
+                ''
+            ]);
+
+            // Segunda fila de información
+            const infoRow2 = worksheet.addRow([
+                'Fecha:', fecha || 'N/A',
+                '',
+                'Edad camada:', edadCamada ? `${edadCamada} días` : 'N/A',
+                ''
+            ]);
+
+            // Tercera fila de información
+            const infoRow3 = worksheet.addRow([
+                'Dispositivo:', selectedDeviceForDaily === 'todos' ? 'Todos los dispositivos' : selectedDeviceForDaily,
+                '',
+                'Total pesadas:', filteredPesadas.length,
+                ''
+            ]);
+
+            // Aplicar formato a las filas de información
+            [infoRow1, infoRow2, infoRow3].forEach(row => {
+                row.getCell(1).font = { bold: true, color: { argb: colors.primary } };
+                row.getCell(4).font = { bold: true, color: { argb: colors.primary } };
+                row.height = 20;
+            });
+
+            worksheet.addRow([]);
+
+            // ENCABEZADOS DE LA TABLA - ✅ NUEVA COLUMNA: Agregada columna "Edad (días)"
+            const headerRow = worksheet.addRow(['Dispositivo', 'Peso (g)', 'Edad (días)', 'Hora', 'Estado', 'Observaciones']);
+            headerRow.eachCell((cell) => {
+                cell.font = { bold: true, color: { argb: 'FFFFFF' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primary } };
+                cell.border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' }
+                };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            });
+
+            // DATOS DE LAS PESADAS
+            filteredPesadas.forEach((pesada, index) => {
+                const fechaPesada = new Date(pesada.fecha);
+                const hora = fechaPesada.toLocaleTimeString('es-ES', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+
+                // ✅ NUEVO: Calcular edad específica para esta pesada
+                const edadPesada = calculateCamadaAge ? Math.floor(calculateCamadaAge(fechaPesada) || 0) : Math.floor(edadCamada || 0);
+                let estadoTexto = '';
+                let observaciones = '';
+                let colorEstado = colors.dark;
+
+                switch (pesada.estado) {
+                    case 'aceptada':
+                        estadoTexto = 'Aceptada';
+                        colorEstado = colors.success;
+                        break;
+                    case 'rechazada':
+                        estadoTexto = 'Rechazada';
+                        observaciones = 'Fuera del coeficiente de homogeneidad';
+                        colorEstado = colors.danger;
+                        break;
+                    case 'descartado':
+                        estadoTexto = 'Descartada';
+                        observaciones = 'Fuera del rango de peso de referencia';
+                        colorEstado = colors.warning;
+                        break;
+                    default:
+                        estadoTexto = pesada.estado || 'Desconocido';
+                }
+
+                // ✅ NUEVA FILA: Incluye la edad de la pesada
+                const dataRow = worksheet.addRow([
+                    pesada.id_dispositivo,
+                    parseFloat(pesada.valor).toFixed(1),
+                    edadPesada || 0, // Nueva columna de edad
+                    hora,
+                    estadoTexto,
+                    observaciones
+                ]);
+
+                // Aplicar formato a la fila
+                dataRow.eachCell((cell, colNumber) => {
+                    cell.border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' }
+                    };
+
+                    if (index % 2 === 1) {
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+                    }
+
+                    // Centrar contenido (excepto observaciones)
+                    if (colNumber !== 6) { // ✅ ACTUALIZADO: Cambió de 5 a 6 para nueva columna
+                        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                    }
+
+                    // Color del estado - ✅ ACTUALIZADO: Cambió de columna 4 a 5
+                    if (colNumber === 5) {
+                        cell.font = { bold: true, color: { argb: colorEstado } };
+                    }
+
+                    // Formato del peso
+                    if (colNumber === 2) {
+                        cell.numFmt = '#,##0.0 "g"';
+                    }
+
+                    // ✅ NUEVO: Formato de la edad (columna 3)
+                    if (colNumber === 3) {
+                        cell.numFmt = '#,##0 "días"';
+                    }
+                });
+            });
+
+            // RESUMEN AL FINAL
+            worksheet.addRow([]);
+            const resumenRow = worksheet.addRow(['RESUMEN ESTADÍSTICO']);
+            resumenRow.getCell(1).font = { size: 14, bold: true, color: { argb: colors.dark } };
+            worksheet.mergeCells(`A${resumenRow.number}:F${resumenRow.number}`); // ✅ ACTUALIZADO: Cambió de E a F
+            resumenRow.getCell(1).alignment = { horizontal: 'center' };
+
+            const stats = getFilteredDailyStats();
+            const aceptadas = filteredPesadas.filter(p => p.estado === 'aceptada').length;
+            const rechazadas = filteredPesadas.filter(p => p.estado === 'rechazada').length;
+            const descartadas = filteredPesadas.filter(p => p.estado === 'descartado').length;
+
+            // ✅ NUEVO: Resumen con información de granja y edad
+            worksheet.addRow(['Granja:', nombreGranja, '', 'Total pesadas:', filteredPesadas.length, '']);
+            worksheet.addRow(['Edad promedio:', edadCamada ? `${edadCamada} días` : 'N/A', '', 'Peso medio aceptadas:', `${stats.peso_medio_aceptadas.toFixed(1)} g`, '']);
+            worksheet.addRow(['Aceptadas:', aceptadas, '', 'Peso medio global:', `${stats.peso_medio_global.toFixed(1)} g`, '']);
+            worksheet.addRow(['Rechazadas:', rechazadas, '', 'Coef. variación:', `${stats.coef_variacion ? stats.coef_variacion.toFixed(1) : '0.0'}%`, '']);
+            worksheet.addRow(['Descartadas:', descartadas, '', '', '', '']);
+
+            // ✅ ACTUALIZADO: Ajustar anchos de columna para nueva columna
+            worksheet.getColumn(1).width = 15; // Dispositivo
+            worksheet.getColumn(2).width = 12; // Peso
+            worksheet.getColumn(3).width = 12; // Edad (nueva columna)
+            worksheet.getColumn(4).width = 10; // Hora
+            worksheet.getColumn(5).width = 12; // Estado
+            worksheet.getColumn(6).width = 35; // Observaciones
+
+            // ✅ MEJORADO: Nombre del archivo con granja y edad
+            const nombreArchivoGranja = granjaSeleccionada ?
+                granjaSeleccionada.nombre.replace(/\s+/g, '_') :
+                'Granja';
+
+            const fileName = `Pesadas_${nombreArchivoGranja}_${camadaInfo?.nombre_camada?.replace(/\s+/g, '_') || 'Camada'}_${edadCamada ? `${edadCamada}dias_` : ''}${fecha}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+            // Generar archivo y descargar
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            link.click();
+
+            URL.revokeObjectURL(url);
+
+            // Mostrar mensaje de éxito
+            const prevError = error;
+            setError('Listado de pesadas exportado con éxito a Excel');
+            setTimeout(() => {
+                if (error === 'Listado de pesadas exportado con éxito a Excel') {
+                    setError(prevError);
+                }
+            }, 3000);
+
+        } catch (err) {
+            console.error('Error al generar Excel:', err);
+            setError('Error al generar el archivo Excel: ' + err.message);
+        }
+    };
+
 
     const getStackedBarChartLayout = () => ({
         ...baseLayout,
@@ -3539,6 +3865,7 @@ export default function PesadasCamadaView({
         // ✅ EVALUACIONES SEGÚN LA TABLA DE REFERENCIA
         const uniformityEval = getUniformityEvaluation(enhancedInfo?.uniformidad || 0);
         const cvEval = getCoefficientVariationEvaluation(filteredStats.coef_variacion || 0);
+        const filteredPesadas = getFilteredDailyPesadas();
 
         return (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -3546,7 +3873,7 @@ export default function PesadasCamadaView({
                 <div className="p-4 bg-white dark:bg-gray-800 rounded shadow">
                     <p className="text-sm text-gray-600 dark:text-gray-400">Total pesadas</p>
                     <p className="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-200">
-                        {filteredStats.total_pesadas}
+                        {filteredPesadas.length}
                     </p>
                 </div>
 
@@ -3665,6 +3992,16 @@ export default function PesadasCamadaView({
                             : `Pesadas del dispositivo ${selectedDeviceForDaily} (${filteredPesadas.length})`
                         }
                     </h3>
+                    <button
+                        onClick={generateExcelPesadasIndividuales}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center text-sm"
+                        disabled={!filteredPesadas || filteredPesadas.length === 0}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Exportar a Excel
+                    </button>
                     <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                         Excluye valores negativos y menores de 30g • Ordenado por hora más reciente
                     </p>
@@ -4741,7 +5078,7 @@ export default function PesadasCamadaView({
             {!isEmbedded ? (
                 // Vista completa cuando no está incrustado
                 <div className="p-6 rounded-lg shadow-md mb-6 bg-gray-50 dark:bg-gray-800">
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                         {/* Empresa */}
                         <div>
                             <label className="block mb-1 font-medium text-gray-800 dark:text-gray-200">Empresa</label>
@@ -4760,8 +5097,8 @@ export default function PesadasCamadaView({
                             </select>
                         </div>
 
-                        {/* Granja */}
-                        <div>
+                        {/* Granja - Ocupa 2 columnas para ser más ancho */}
+                        <div className="md:col-span-2">
                             <label className="block mb-1 font-medium text-gray-800 dark:text-gray-200">Granja</label>
                             <select
                                 className="w-full p-2 border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-white"
@@ -4789,8 +5126,15 @@ export default function PesadasCamadaView({
                             >
                                 <option value="">-- Seleccione --</option>
                                 {camadas.map(c => (
-                                    <option key={c.id_camada} value={c.id_camada}>
-                                        {c.nombre_camada}
+                                    <option
+                                        key={c.id_camada}
+                                        value={c.id_camada}
+                                        style={{
+                                            color: c.fecha_hora_final ? '#dc2626' : 'inherit', // Rojo si está finalizada
+                                            fontWeight: c.fecha_hora_final ? 'bold' : 'normal'
+                                        }}
+                                    >
+                                        {c.nombre_camada} {c.fecha_hora_final ? '(Finalizada)' : ''}
                                     </option>
                                 ))}
                             </select>
