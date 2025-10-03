@@ -3738,7 +3738,7 @@ class CamadaController extends Controller
         $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
 
         // PARÁMETRO 2: Mínimo de detecciones de actividad (valor=1) para considerar la ventana como "activa"
-        $MIN_DETECCIONES_POR_VENTANA = 7; // Al menos 3 lecturas con valor=1
+        $MIN_DETECCIONES_POR_VENTANA = 8; // Al menos 3 lecturas con valor=1
 
         // PARÁMETRO 3: Porcentaje mínimo de actividad en la ventana (alternativa o complemento al anterior)
         $PORCENTAJE_MINIMO_ACTIVIDAD = 50; // Al menos 50% de las lecturas deben ser valor=1
