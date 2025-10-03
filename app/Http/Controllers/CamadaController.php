@@ -4087,17 +4087,14 @@ class CamadaController extends Controller
             'ventanas_inactivas' => $totalVentanas - $ventanasActivas,
             'porcentaje_ventanas_activas' => round(($ventanasActivas / $totalVentanas) * 100, 2)
         ],
-        'estadisticas_actividad' => [
-            'total_lecturas' => $totalLecturas,
-            'lecturas_con_actividad' => $totalActivas,
-            'lecturas_sin_actividad' => $totalLecturas - $totalActivas,
-            'porcentaje_lecturas_activas' => round(($totalActivas / $totalLecturas) * 100, 2)
-        ],
-        'resumen' => [
-            'tiempo_actividad_total' => "{$horasActividad}h {$minutosActividad}m {$segundosActividad}s",
+        'resumen_actividad' => [
+            'tiempo_total_segundos' => $tiempoActividadTotal,
+            'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasActividad, $minutosActividad, $segundosActividad),
             'porcentaje_actividad' => $porcentajeActividad,
             'porcentaje_inactividad' => $porcentajeInactividad,
-            'total_periodos_actividad' => count($periodosActividad)
+            'total_lecturas' => $totalLecturas,
+            'lecturas_actividad' => $totalActivas,
+            'numero_periodos' => count($periodosActividad)
         ],
         'periodos_actividad' => $periodosActividad,
         'actividad_por_hora' => $actividadPorHora,
