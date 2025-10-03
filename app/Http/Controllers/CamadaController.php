@@ -3714,393 +3714,300 @@ class CamadaController extends Controller
      * @return JsonResponse
      */
     public function monitorearActividad(Request $request, int $dispId): JsonResponse
-{
-    // 1. Validar parámetros
-    $request->validate([
-        'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
-        'fecha_fin'    => 'required|date',
-    ]);
+    {
+        // 1. Validar parámetros
+        $request->validate([
+            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+            'fecha_fin'    => 'required|date',
+        ]);
 
-    $fechaInicio = $request->query('fecha_inicio');
-    $fechaFin = $request->query('fecha_fin');
+        $fechaInicio = $request->query('fecha_inicio');
+        $fechaFin = $request->query('fecha_fin');
 
-    // 2. Cargar dispositivo
-    $dispositivo = Dispositivo::findOrFail($dispId);
-    $serie = $dispositivo->numero_serie;
+        // 2. Cargar dispositivo
+        $dispositivo = Dispositivo::findOrFail($dispId);
+        $serie = $dispositivo->numero_serie;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 3. PARÁMETROS DEL ALGORITMO DE VENTANAS (CONFIGURABLES)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 3. PARÁMETROS DEL ALGORITMO DE VENTANAS (CONFIGURABLES)
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    $SENSOR_MOVIMIENTO = 6;
+        $SENSOR_MOVIMIENTO = 3;
 
-    // PARÁMETRO 1: Tamaño de la ventana temporal
-    $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
+        // PARÁMETRO 1: Tamaño de la ventana temporal
+        $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
 
-    // PARÁMETRO 2: Mínimo de detecciones de actividad (valor=1) para considerar la ventana como "activa"
-    $MIN_DETECCIONES_POR_VENTANA = 3; // Al menos 3 lecturas con valor=1
+        // PARÁMETRO 2: Mínimo de detecciones de actividad (valor=1) para considerar la ventana como "activa"
+        $MIN_DETECCIONES_POR_VENTANA = 10; // Al menos 3 lecturas con valor=1
 
-    // PARÁMETRO 3: Porcentaje mínimo de actividad en la ventana
-    $PORCENTAJE_MINIMO_ACTIVIDAD = 50; // Al menos 50% de las lecturas deben ser valor=1
+        // PARÁMETRO 3: Porcentaje mínimo de actividad en la ventana (alternativa o complemento al anterior)
+        $PORCENTAJE_MINIMO_ACTIVIDAD = 50; // Al menos 50% de las lecturas deben ser valor=1
 
-    // PARÁMETRO 4: Mínimo de ventanas activas consecutivas para formar un período
-    $MIN_VENTANAS_CONSECUTIVAS = 2; // Al menos 2 minutos consecutivos activos
+        // PARÁMETRO 4: Mínimo de ventanas activas consecutivas para formar un período
+        $MIN_VENTANAS_CONSECUTIVAS = 2; // Al menos 2 minutos consecutivos activos
 
-    // PARÁMETRO 5: Máximo de ventanas inactivas permitidas dentro de un período
-    $MAX_VENTANAS_INACTIVAS_PERMITIDAS = 2; // Permite hasta 2 minutos de inactividad dentro de un período
+        // PARÁMETRO 5: Máximo de ventanas inactivas permitidas dentro de un período
+        $MAX_VENTANAS_INACTIVAS_PERMITIDAS = 2; // Permite hasta 2 minutos de inactividad dentro de un período
 
-    // PARÁMETRO 6: Duración máxima de un período en ventanas
-    $MAX_VENTANAS_POR_PERIODO = 60; // Máximo 60 minutos (1 hora) por período
+        // PARÁMETRO 6: Duración máxima de un período en ventanas
+        $MAX_VENTANAS_POR_PERIODO = 60; // Máximo 60 minutos (1 hora) por período
 
-    Log::info("═══════════════════════════════════════════════════════════════════");
-    Log::info("🐔 INICIO ANÁLISIS DE ACTIVIDAD - DEBUG MODE");
-    Log::info("═══════════════════════════════════════════════════════════════════", [
-        'dispositivo' => $serie,
-        'fecha_inicio' => $fechaInicio,
-        'fecha_fin' => $fechaFin,
-        'parametros' => [
-            'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
-            'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
-            'porcentaje_minimo' => $PORCENTAJE_MINIMO_ACTIVIDAD,
-            'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
-            'max_ventanas_inactivas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
-            'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
-        ]
-    ]);
+        Log::info("=== ALGORITMO DE VENTANAS TEMPORALES ===", [
+            'dispositivo' => $serie,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'parametros' => [
+                'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
+                'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
+                'porcentaje_minimo' => $PORCENTAJE_MINIMO_ACTIVIDAD,
+                'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
+                'max_ventanas_inactivas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
+                'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
+            ]
+        ]);
 
-    // 4. Obtener TODAS las lecturas del sensor de movimiento
-    $lecturas = EntradaDato::where('id_dispositivo', $serie)
-        ->where('id_sensor', $SENSOR_MOVIMIENTO)
-        ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-        ->orderBy('fecha', 'asc')
-        ->select('fecha', 'valor')
-        ->get();
+        // 4. Obtener TODAS las lecturas del sensor de movimiento
+        $lecturas = EntradaDato::where('id_dispositivo', $serie)
+            ->where('id_sensor', $SENSOR_MOVIMIENTO)
+            ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
+            ->orderBy('fecha', 'asc')
+            ->select('fecha', 'valor')
+            ->get();
 
-    if ($lecturas->isEmpty()) {
-        Log::warning("⚠️ No se encontraron lecturas de movimiento");
-        return response()->json([
-            'mensaje' => 'No se encontraron lecturas de movimiento',
-            'dispositivo' => ['id' => $dispId, 'numero_serie' => $serie],
-            'periodo' => ['fecha_inicio' => $fechaInicio, 'fecha_fin' => $fechaFin]
-        ], Response::HTTP_OK);
-    }
+        if ($lecturas->isEmpty()) {
+            return response()->json([
+                'mensaje' => 'No se encontraron lecturas de movimiento',
+                'dispositivo' => ['id' => $dispId, 'numero_serie' => $serie],
+                'periodo' => ['fecha_inicio' => $fechaInicio, 'fecha_fin' => $fechaFin]
+            ], Response::HTTP_OK);
+        }
 
-    Log::info("📊 LECTURAS CARGADAS", [
-        'total_lecturas' => $lecturas->count(),
-        'lecturas_con_actividad' => $lecturas->where('valor', 1)->count(),
-        'lecturas_sin_actividad' => $lecturas->where('valor', 0)->count(),
-        'primera_lectura' => $lecturas->first()->fecha,
-        'ultima_lectura' => $lecturas->last()->fecha
-    ]);
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 5. PASO 1: AGRUPAR LECTURAS EN VENTANAS TEMPORALES
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 5. PASO 1: AGRUPAR LECTURAS EN VENTANAS TEMPORALES
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        $ventanas = [];
 
-    Log::info("─────────────────────────────────────────────────────────────────");
-    Log::info("📦 FASE 1: CREACIÓN DE VENTANAS TEMPORALES");
-    Log::info("─────────────────────────────────────────────────────────────────");
+        foreach ($lecturas as $lectura) {
+            $timestamp = Carbon::parse($lectura->fecha);
 
-    $ventanas = [];
+            // Calcular el inicio de la ventana (redondear al minuto anterior)
+            $inicioVentana = $timestamp->copy()->startOfMinute();
+            $keyVentana = $inicioVentana->format('Y-m-d H:i:00');
 
-    foreach ($lecturas as $lectura) {
-        $timestamp = Carbon::parse($lectura->fecha);
+            // Crear ventana si no existe
+            if (!isset($ventanas[$keyVentana])) {
+                $ventanas[$keyVentana] = [
+                    'inicio' => $keyVentana,
+                    'fin' => $inicioVentana->copy()->addSeconds($TAMANIO_VENTANA_SEGUNDOS)->format('Y-m-d H:i:s'),
+                    'lecturas' => [],
+                    'total_lecturas' => 0,
+                    'lecturas_actividad' => 0,
+                    'lecturas_inactividad' => 0
+                ];
+            }
 
-        // Calcular el inicio de la ventana (redondear al minuto anterior)
-        $inicioVentana = $timestamp->copy()->startOfMinute();
-        $keyVentana = $inicioVentana->format('Y-m-d H:i:00');
-
-        // Crear ventana si no existe
-        if (!isset($ventanas[$keyVentana])) {
-            $ventanas[$keyVentana] = [
-                'inicio' => $keyVentana,
-                'fin' => $inicioVentana->copy()->addSeconds($TAMANIO_VENTANA_SEGUNDOS)->format('Y-m-d H:i:s'),
-                'lecturas' => [],
-                'total_lecturas' => 0,
-                'lecturas_actividad' => 0,
-                'lecturas_inactividad' => 0
+            // Agregar lectura a la ventana
+            $ventanas[$keyVentana]['lecturas'][] = [
+                'fecha' => $lectura->fecha,
+                'valor' => (int)$lectura->valor
             ];
-        }
+            $ventanas[$keyVentana]['total_lecturas']++;
 
-        // Agregar lectura a la ventana
-        $ventanas[$keyVentana]['lecturas'][] = [
-            'fecha' => $lectura->fecha,
-            'valor' => (int)$lectura->valor
-        ];
-        $ventanas[$keyVentana]['total_lecturas']++;
-
-        if ((int)$lectura->valor === 1) {
-            $ventanas[$keyVentana]['lecturas_actividad']++;
-        } else {
-            $ventanas[$keyVentana]['lecturas_inactividad']++;
-        }
-    }
-
-    Log::info("✅ Total de ventanas creadas: " . count($ventanas));
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 6. PASO 2: CLASIFICAR CADA VENTANA COMO "ACTIVA" o "INACTIVA"
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    Log::info("─────────────────────────────────────────────────────────────────");
-    Log::info("🔍 FASE 2: CLASIFICACIÓN DE VENTANAS");
-    Log::info("─────────────────────────────────────────────────────────────────");
-
-    $ventanasClasificadas = [];
-    $estadisticasClasificacion = [
-        'ventanas_activas' => 0,
-        'ventanas_inactivas' => 0,
-        'ventanas_limite_detecciones' => 0,
-        'ventanas_limite_porcentaje' => 0
-    ];
-
-    foreach ($ventanas as $keyVentana => $ventana) {
-        // Calcular porcentaje de actividad
-        $porcentajeActividad = $ventana['total_lecturas'] > 0
-            ? ($ventana['lecturas_actividad'] / $ventana['total_lecturas']) * 100
-            : 0;
-
-        // Determinar si la ventana está ACTIVA usando AMBOS criterios
-        $cumpleDetecciones = $ventana['lecturas_actividad'] >= $MIN_DETECCIONES_POR_VENTANA;
-        $cumplePorcentaje = $porcentajeActividad >= $PORCENTAJE_MINIMO_ACTIVIDAD;
-        $esActiva = $cumpleDetecciones && $cumplePorcentaje;
-
-        $ventanasClasificadas[$keyVentana] = [
-            'inicio' => $ventana['inicio'],
-            'fin' => $ventana['fin'],
-            'activa' => $esActiva,
-            'total_lecturas' => $ventana['total_lecturas'],
-            'lecturas_actividad' => $ventana['lecturas_actividad'],
-            'porcentaje_actividad' => round($porcentajeActividad, 1),
-            'cumple_detecciones' => $cumpleDetecciones,
-            'cumple_porcentaje' => $cumplePorcentaje
-        ];
-
-        // Estadísticas
-        if ($esActiva) {
-            $estadisticasClasificacion['ventanas_activas']++;
-        } else {
-            $estadisticasClasificacion['ventanas_inactivas']++;
-            if (!$cumpleDetecciones) $estadisticasClasificacion['ventanas_limite_detecciones']++;
-            if (!$cumplePorcentaje) $estadisticasClasificacion['ventanas_limite_porcentaje']++;
-        }
-
-        // Log detallado de cada ventana
-        $estadoEmoji = $esActiva ? "✅" : "❌";
-        $razon = !$esActiva 
-            ? (!$cumpleDetecciones ? "falta detecciones" : "falta porcentaje")
-            : "cumple ambos";
-
-        Log::debug("{$estadoEmoji} Ventana {$keyVentana}: " . ($esActiva ? 'ACTIVA' : 'INACTIVA') . " | " .
-            "{$ventana['lecturas_actividad']}/{$ventana['total_lecturas']} lecturas (". round($porcentajeActividad, 1) . "%) | " .
-            "Detecciones: " . ($cumpleDetecciones ? "✓" : "✗") . " | " .
-            "Porcentaje: " . ($cumplePorcentaje ? "✓" : "✗") . " | " .
-            "Razón: {$razon}");
-    }
-
-    // Ordenar ventanas por fecha
-    ksort($ventanasClasificadas);
-
-    Log::info("📈 RESUMEN DE CLASIFICACIÓN:", $estadisticasClasificacion);
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 7. PASO 3: AGRUPAR VENTANAS ACTIVAS EN PERÍODOS
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    Log::info("─────────────────────────────────────────────────────────────────");
-    Log::info("⏱️ FASE 3: AGRUPACIÓN EN PERÍODOS DE ACTIVIDAD");
-    Log::info("─────────────────────────────────────────────────────────────────");
-
-    $periodosActividad = [];
-    $ventanasPeriodoActual = [];
-    $ventanasInactivasEnPeriodo = 0;
-    $numeroPeriodo = 0;
-
-    foreach ($ventanasClasificadas as $ventana) {
-
-        // ─────────────────────────────────────────────────────────────────
-        // CASO 1: La ventana está ACTIVA
-        // ─────────────────────────────────────────────────────────────────
-        if ($ventana['activa']) {
-            // Agregar ventana al período actual
-            $ventanasPeriodoActual[] = $ventana;
-            $ventanasInactivasEnPeriodo = 0; // Resetear contador de inactivas
-
-            Log::debug("  🟢 Ventana ACTIVA {$ventana['inicio']} añadida al período actual (ahora tiene " . count($ventanasPeriodoActual) . " ventanas)");
-
-            // ✅ RESTRICCIÓN: Verificar duración máxima del período
-            if (count($ventanasPeriodoActual) >= $MAX_VENTANAS_POR_PERIODO) {
-                $numeroPeriodo++;
-                Log::warning("  ⚠️ LÍMITE MÁXIMO alcanzado para período #{$numeroPeriodo} (" . count($ventanasPeriodoActual) . " ventanas). Finalizando período.");
-
-                $this->finalizarPeriodoVentanas(
-                    $periodosActividad,
-                    $ventanasPeriodoActual,
-                    $MIN_VENTANAS_CONSECUTIVAS
-                );
-
-                // Iniciar nuevo período con la ventana actual
-                $ventanasPeriodoActual = [$ventana];
-                $ventanasInactivasEnPeriodo = 0;
-                
-                Log::info("  🔄 Nuevo período iniciado con la ventana actual");
+            if ((int)$lectura->valor === 1) {
+                $ventanas[$keyVentana]['lecturas_actividad']++;
+            } else {
+                $ventanas[$keyVentana]['lecturas_inactividad']++;
             }
         }
-        // ─────────────────────────────────────────────────────────────────
-        // CASO 2: La ventana está INACTIVA
-        // ─────────────────────────────────────────────────────────────────
-        else {
-            // Si hay un período activo en curso
-            if (!empty($ventanasPeriodoActual)) {
-                $ventanasInactivasEnPeriodo++;
 
-                Log::debug("  🔴 Ventana INACTIVA {$ventana['inicio']} encontrada (inactivas consecutivas: {$ventanasInactivasEnPeriodo}/{$MAX_VENTANAS_INACTIVAS_PERMITIDAS})");
+        Log::info("Total de ventanas creadas: " . count($ventanas));
 
-                // ✅ RESTRICCIÓN: Verificar ventanas inactivas consecutivas
-                if ($ventanasInactivasEnPeriodo > $MAX_VENTANAS_INACTIVAS_PERMITIDAS) {
-                    $numeroPeriodo++;
-                    Log::warning("  ⚠️ LÍMITE de ventanas INACTIVAS superado para período #{$numeroPeriodo}. Finalizando período.");
-                    Log::info("  📊 Período tenía " . count($ventanasPeriodoActual) . " ventanas antes de finalizar");
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 6. PASO 2: CLASIFICAR CADA VENTANA COMO "ACTIVA" o "INACTIVA"
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                    // Finalizar período (sin incluir las ventanas inactivas)
+        $ventanasClasificadas = [];
+
+        foreach ($ventanas as $keyVentana => $ventana) {
+            // Calcular porcentaje de actividad
+            $porcentajeActividad = $ventana['total_lecturas'] > 0
+                ? ($ventana['lecturas_actividad'] / $ventana['total_lecturas']) * 100
+                : 0;
+
+            // Determinar si la ventana está ACTIVA usando AMBOS criterios
+            $esActiva = (
+                $ventana['lecturas_actividad'] >= $MIN_DETECCIONES_POR_VENTANA
+                and
+                $porcentajeActividad >= $PORCENTAJE_MINIMO_ACTIVIDAD
+            );
+
+            $ventanasClasificadas[$keyVentana] = [
+                'inicio' => $ventana['inicio'],
+                'fin' => $ventana['fin'],
+                'activa' => $esActiva,
+                'total_lecturas' => $ventana['total_lecturas'],
+                'lecturas_actividad' => $ventana['lecturas_actividad'],
+                'porcentaje_actividad' => round($porcentajeActividad, 1)
+            ];
+
+            Log::debug("Ventana {$keyVentana}: " . ($esActiva ? 'ACTIVA' : 'INACTIVA') .
+                " ({$ventana['lecturas_actividad']}/{$ventana['total_lecturas']} = {$porcentajeActividad}%)");
+        }
+
+        // Ordenar ventanas por fecha
+        ksort($ventanasClasificadas);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 7. PASO 3: AGRUPAR VENTANAS ACTIVAS EN PERÍODOS
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        $periodosActividad = [];
+        $ventanasPeriodoActual = [];
+        $ventanasInactivasEnPeriodo = 0;
+
+        foreach ($ventanasClasificadas as $ventana) {
+
+            // ─────────────────────────────────────────────────────────────────
+            // CASO 1: La ventana está ACTIVA
+            // ─────────────────────────────────────────────────────────────────
+            if ($ventana['activa']) {
+                // Agregar ventana al período actual
+                $ventanasPeriodoActual[] = $ventana;
+                $ventanasInactivasEnPeriodo = 0; // Resetear contador de inactivas
+
+                // ✅ RESTRICCIÓN: Verificar duración máxima del período
+                if (count($ventanasPeriodoActual) >= $MAX_VENTANAS_POR_PERIODO) {
+                    Log::debug("Máximo de ventanas alcanzado, finalizando período");
+
                     $this->finalizarPeriodoVentanas(
                         $periodosActividad,
                         $ventanasPeriodoActual,
                         $MIN_VENTANAS_CONSECUTIVAS
                     );
 
-                    // Resetear
-                    $ventanasPeriodoActual = [];
+                    // Iniciar nuevo período con la ventana actual
+                    $ventanasPeriodoActual = [$ventana];
                     $ventanasInactivasEnPeriodo = 0;
-                } else {
-                    // Permitir ventanas inactivas dentro del período (crear "huecos")
-                    $ventanasPeriodoActual[] = $ventana;
-                    Log::debug("  ⚪ Ventana inactiva PERMITIDA dentro del período (hueco)");
                 }
-            } else {
-                Log::debug("  🔴 Ventana INACTIVA {$ventana['inicio']} ignorada (no hay período activo)");
+            }
+            // ─────────────────────────────────────────────────────────────────
+            // CASO 2: La ventana está INACTIVA
+            // ─────────────────────────────────────────────────────────────────
+            else {
+                // Si hay un período activo en curso
+                if (!empty($ventanasPeriodoActual)) {
+                    $ventanasInactivasEnPeriodo++;
+
+                    // ✅ RESTRICCIÓN: Verificar ventanas inactivas consecutivas
+                    if ($ventanasInactivasEnPeriodo > $MAX_VENTANAS_INACTIVAS_PERMITIDAS) {
+                        Log::debug("Máximo de ventanas inactivas alcanzado, finalizando período");
+
+                        // Finalizar período (sin incluir las ventanas inactivas)
+                        $this->finalizarPeriodoVentanas(
+                            $periodosActividad,
+                            $ventanasPeriodoActual,
+                            $MIN_VENTANAS_CONSECUTIVAS
+                        );
+
+                        // Resetear
+                        $ventanasPeriodoActual = [];
+                        $ventanasInactivasEnPeriodo = 0;
+                    } else {
+                        // Permitir ventanas inactivas dentro del período (crear "huecos")
+                        $ventanasPeriodoActual[] = $ventana;
+                    }
+                }
             }
         }
+
+        // Finalizar último período si existe
+        if (!empty($ventanasPeriodoActual)) {
+            $this->finalizarPeriodoVentanas(
+                $periodosActividad,
+                $ventanasPeriodoActual,
+                $MIN_VENTANAS_CONSECUTIVAS
+            );
+        }
+
+        Log::info("Períodos detectados: " . count($periodosActividad));
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 8. CALCULAR ESTADÍSTICAS GLOBALES
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        $totalLecturas = $lecturas->count();
+        $totalActivas = $lecturas->where('valor', 1)->count();
+
+        $totalVentanas = count($ventanasClasificadas);
+        $ventanasActivas = collect($ventanasClasificadas)->where('activa', true)->count();
+
+        $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')
+            ->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
+
+        $tiempoActividadTotal = collect($periodosActividad)->sum('duracion_segundos');
+
+        $porcentajeActividad = $duracionTotalSegundos > 0
+            ? round(($tiempoActividadTotal / $duracionTotalSegundos) * 100, 2)
+            : 0;
+
+        $porcentajeInactividad = round(100 - $porcentajeActividad, 2);
+
+        // Convertir a formato legible
+        $horasActividad = floor($tiempoActividadTotal / 3600);
+        $minutosActividad = floor(($tiempoActividadTotal % 3600) / 60);
+        $segundosActividad = $tiempoActividadTotal % 60;
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 9. CALCULAR ACTIVIDAD POR HORA Y RESUMEN DIARIO
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        $actividadPorHora = $this->calcularActividadPorHora($periodosActividad);
+        $resumenDiario = $this->calcularResumenDiario($periodosActividad, $fechaInicio, $fechaFin);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 10. PREPARAR RESPUESTA
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        return response()->json([
+            'dispositivo' => [
+                'id' => $dispId,
+                'numero_serie' => $serie
+            ],
+            'periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin,
+                'duracion_total_segundos' => $duracionTotalSegundos
+            ],
+            'configuracion_algoritmo' => [
+                'metodo' => 'ventanas_temporales',
+                'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
+                'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
+                'porcentaje_minimo_actividad' => $PORCENTAJE_MINIMO_ACTIVIDAD,
+                'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
+                'max_ventanas_inactivas_permitidas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
+                'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
+            ],
+            'estadisticas_ventanas' => [
+                'total_ventanas' => $totalVentanas,
+                'ventanas_activas' => $ventanasActivas,
+                'ventanas_inactivas' => $totalVentanas - $ventanasActivas,
+                'porcentaje_ventanas_activas' => round(($ventanasActivas / $totalVentanas) * 100, 2)
+            ],
+            'resumen_actividad' => [
+                'tiempo_total_segundos' => $tiempoActividadTotal,
+                'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasActividad, $minutosActividad, $segundosActividad),
+                'porcentaje_actividad' => $porcentajeActividad,
+                'porcentaje_inactividad' => $porcentajeInactividad,
+                'total_lecturas' => $totalLecturas,
+                'lecturas_actividad' => $totalActivas,
+                'numero_periodos' => count($periodosActividad)
+            ],
+            'periodos_actividad' => $periodosActividad,
+            'actividad_por_hora' => $actividadPorHora,
+            'resumen_diario' => $resumenDiario
+        ], Response::HTTP_OK);
     }
-
-    // Finalizar último período si existe
-    if (!empty($ventanasPeriodoActual)) {
-        $numeroPeriodo++;
-        Log::info("  🏁 Finalizando último período #{$numeroPeriodo} con " . count($ventanasPeriodoActual) . " ventanas");
-        
-        $this->finalizarPeriodoVentanas(
-            $periodosActividad,
-            $ventanasPeriodoActual,
-            $MIN_VENTANAS_CONSECUTIVAS
-        );
-    }
-
-    Log::info("─────────────────────────────────────────────────────────────────");
-    Log::info("🎯 PERÍODOS FINALES DETECTADOS: " . count($periodosActividad));
-    Log::info("─────────────────────────────────────────────────────────────────");
-
-    // Log detallado de cada período
-    foreach ($periodosActividad as $index => $periodo) {
-        $duracionMinutos = round($periodo['duracion_segundos'] / 60, 1);
-        Log::info("📍 Período #" . ($index + 1) . ":", [
-            'inicio' => $periodo['inicio'],
-            'fin' => $periodo['fin'],
-            'duracion' => "{$duracionMinutos} minutos ({$periodo['duracion_segundos']} segundos)",
-            'ventanas_totales' => $periodo['ventanas_totales'],
-            'ventanas_activas' => $periodo['ventanas_activas'],
-            'ventanas_inactivas' => $periodo['ventanas_inactivas']
-        ]);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 8. CALCULAR ESTADÍSTICAS GLOBALES
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    $totalLecturas = $lecturas->count();
-    $totalActivas = $lecturas->where('valor', 1)->count();
-
-    $totalVentanas = count($ventanasClasificadas);
-    $ventanasActivas = collect($ventanasClasificadas)->where('activa', true)->count();
-
-    $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')
-        ->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
-
-    $tiempoActividadTotal = collect($periodosActividad)->sum('duracion_segundos');
-
-    $porcentajeActividad = $duracionTotalSegundos > 0
-        ? round(($tiempoActividadTotal / $duracionTotalSegundos) * 100, 2)
-        : 0;
-
-    $porcentajeInactividad = round(100 - $porcentajeActividad, 2);
-
-    // Convertir a formato legible
-    $horasActividad = floor($tiempoActividadTotal / 3600);
-    $minutosActividad = floor(($tiempoActividadTotal % 3600) / 60);
-    $segundosActividad = $tiempoActividadTotal % 60;
-
-    Log::info("═══════════════════════════════════════════════════════════════════");
-    Log::info("📊 ESTADÍSTICAS FINALES");
-    Log::info("═══════════════════════════════════════════════════════════════════", [
-        'tiempo_total_analizado' => $duracionTotalSegundos . " segundos",
-        'tiempo_actividad_detectada' => "{$horasActividad}h {$minutosActividad}m {$segundosActividad}s",
-        'porcentaje_actividad' => $porcentajeActividad . "%",
-        'total_periodos' => count($periodosActividad),
-        'total_ventanas' => $totalVentanas,
-        'ventanas_activas' => $ventanasActivas,
-        'ventanas_inactivas' => $totalVentanas - $ventanasActivas
-    ]);
-    Log::info("═══════════════════════════════════════════════════════════════════");
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 9. CALCULAR ACTIVIDAD POR HORA Y RESUMEN DIARIO
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    $actividadPorHora = $this->calcularActividadPorHora($periodosActividad);
-    $resumenDiario = $this->calcularResumenDiario($periodosActividad, $fechaInicio, $fechaFin);
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 10. PREPARAR RESPUESTA
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    return response()->json([
-        'dispositivo' => [
-            'id' => $dispId,
-            'numero_serie' => $serie
-        ],
-        'periodo' => [
-            'fecha_inicio' => $fechaInicio,
-            'fecha_fin' => $fechaFin,
-            'duracion_total_segundos' => $duracionTotalSegundos
-        ],
-        'configuracion_algoritmo' => [
-            'metodo' => 'ventanas_temporales',
-            'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
-            'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
-            'porcentaje_minimo_actividad' => $PORCENTAJE_MINIMO_ACTIVIDAD,
-            'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
-            'max_ventanas_inactivas_permitidas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
-            'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
-        ],
-        'estadisticas_ventanas' => [
-            'total_ventanas' => $totalVentanas,
-            'ventanas_activas' => $ventanasActivas,
-            'ventanas_inactivas' => $totalVentanas - $ventanasActivas,
-            'porcentaje_ventanas_activas' => round(($ventanasActivas / $totalVentanas) * 100, 2)
-        ],
-        'resumen_actividad' => [
-            'tiempo_total_segundos' => $tiempoActividadTotal,
-            'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasActividad, $minutosActividad, $segundosActividad),
-            'porcentaje_actividad' => $porcentajeActividad,
-            'porcentaje_inactividad' => $porcentajeInactividad,
-            'total_lecturas' => $totalLecturas,
-            'lecturas_actividad' => $totalActivas,
-            'numero_periodos' => count($periodosActividad)
-        ],
-        'periodos_actividad' => $periodosActividad,
-        'actividad_por_hora' => $actividadPorHora,
-        'resumen_diario' => $resumenDiario
-    ], Response::HTTP_OK);
-}
 
     /**
      * Finaliza un período de ventanas y lo agrega a la lista si cumple los requisitos
