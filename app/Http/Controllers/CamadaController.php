@@ -3738,16 +3738,16 @@ class CamadaController extends Controller
         $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
 
         // PARÁMETRO 2: Mínimo de detecciones de actividad (valor=1) para considerar la ventana como "activa"
-        $MIN_DETECCIONES_POR_VENTANA = 3; // Al menos 3 lecturas con valor=1
+        $MIN_DETECCIONES_POR_VENTANA = 20; // Al menos 3 lecturas con valor=1
 
         // PARÁMETRO 3: Porcentaje mínimo de actividad en la ventana (alternativa o complemento al anterior)
-        $PORCENTAJE_MINIMO_ACTIVIDAD = 50; // Al menos 50% de las lecturas deben ser valor=1
+        $PORCENTAJE_MINIMO_ACTIVIDAD = 60; // Al menos 50% de las lecturas deben ser valor=1
 
         // PARÁMETRO 4: Mínimo de ventanas activas consecutivas para formar un período
-        $MIN_VENTANAS_CONSECUTIVAS = 2; // Al menos 2 minutos consecutivos activos
+        $MIN_VENTANAS_CONSECUTIVAS = 3; // Al menos 2 minutos consecutivos activos
 
         // PARÁMETRO 5: Máximo de ventanas inactivas permitidas dentro de un período
-        $MAX_VENTANAS_INACTIVAS_PERMITIDAS = 2; // Permite hasta 2 minutos de inactividad dentro de un período
+        $MAX_VENTANAS_INACTIVAS_PERMITIDAS = 1; // Permite hasta 2 minutos de inactividad dentro de un período
 
         // PARÁMETRO 6: Duración máxima de un período en ventanas
         $MAX_VENTANAS_POR_PERIODO = 60; // Máximo 60 minutos (1 hora) por período
