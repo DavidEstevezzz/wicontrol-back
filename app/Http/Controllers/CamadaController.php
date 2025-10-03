@@ -3732,7 +3732,7 @@ class CamadaController extends Controller
         // 3. PARÁMETROS DEL ALGORITMO DE VENTANAS (CONFIGURABLES)
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        $SENSOR_MOVIMIENTO = 6;
+        $SENSOR_MOVIMIENTO = 3;
 
         // PARÁMETRO 1: Tamaño de la ventana temporal
         $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
