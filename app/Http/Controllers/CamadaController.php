@@ -94,178 +94,178 @@ class CamadaController extends Controller
         return response()->json(null, Response::HTTP_NO_CONTENT);
     }
 
-   /**
- * Obtiene dispositivos disponibles para vincular a una camada de una granja específica
- * (dispositivos que no tienen vinculación activa)
- * 
- * @param string $codigoGranja
- * @return JsonResponse
- */
-public function getDispositivosDisponiblesByGranja(string $codigoGranja): JsonResponse
-{
-    // Validar que la granja existe
-    $granja = Granja::where('numero_rega', $codigoGranja)->first();
-    if (!$granja) {
+    /**
+     * Obtiene dispositivos disponibles para vincular a una camada de una granja específica
+     * (dispositivos que no tienen vinculación activa)
+     * 
+     * @param string $codigoGranja
+     * @return JsonResponse
+     */
+    public function getDispositivosDisponiblesByGranja(string $codigoGranja): JsonResponse
+    {
+        // Validar que la granja existe
+        $granja = Granja::where('numero_rega', $codigoGranja)->first();
+        if (!$granja) {
+            return response()->json([
+                'message' => 'Granja no encontrada'
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        // Obtener todos los dispositivos de la granja usando la relación correcta:
+        // Dispositivo -> Instalacion -> Granja
+        $todosDispositivos = Dispositivo::join('tb_instalacion', 'tb_dispositivo.id_instalacion', '=', 'tb_instalacion.id_instalacion')
+            ->where('tb_instalacion.numero_rega', $codigoGranja)
+            ->select([
+                'tb_dispositivo.id_dispositivo',
+                'tb_dispositivo.numero_serie',
+                'tb_dispositivo.ip_address'
+            ])
+            ->get();
+
+        // Obtener dispositivos que tienen vinculación activa (fecha_vinculacion SIN fecha_desvinculacion)
+        $dispositivosOcupados = DB::table('tb_relacion_camada_dispositivo')
+            ->whereNull('fecha_desvinculacion')
+            ->pluck('id_dispositivo')
+            ->toArray();
+
+        // Filtrar dispositivos disponibles (los que NO están en la lista de ocupados)
+        $dispositivosDisponibles = $todosDispositivos->filter(function ($dispositivo) use ($dispositivosOcupados) {
+            return !in_array($dispositivo->id_dispositivo, $dispositivosOcupados);
+        })->values();
+
         return response()->json([
-            'message' => 'Granja no encontrada'
-        ], Response::HTTP_NOT_FOUND);
+            'total' => $dispositivosDisponibles->count(),
+            'dispositivos' => $dispositivosDisponibles
+        ], Response::HTTP_OK);
     }
 
-    // Obtener todos los dispositivos de la granja usando la relación correcta:
-    // Dispositivo -> Instalacion -> Granja
-    $todosDispositivos = Dispositivo::join('tb_instalacion', 'tb_dispositivo.id_instalacion', '=', 'tb_instalacion.id_instalacion')
-        ->where('tb_instalacion.numero_rega', $codigoGranja)
-        ->select([
-            'tb_dispositivo.id_dispositivo',
-            'tb_dispositivo.numero_serie',
-            'tb_dispositivo.ip_address'
-        ])
-        ->get();
+    /**
+     * Obtiene dispositivos vinculados activamente a una camada específica
+     * (tienen fecha_vinculacion pero NO fecha_desvinculacion)
+     * 
+     * @param int $camadaId
+     * @return JsonResponse
+     */
+    public function getDispositivosVinculadosByCamada(int $camadaId): JsonResponse
+    {
+        $camada = Camada::findOrFail($camadaId);
 
-    // Obtener dispositivos que tienen vinculación activa (fecha_vinculacion SIN fecha_desvinculacion)
-    $dispositivosOcupados = DB::table('tb_relacion_camada_dispositivo')
-        ->whereNull('fecha_desvinculacion')
-        ->pluck('id_dispositivo')
-        ->toArray();
+        $dispositivos = Dispositivo::join('tb_relacion_camada_dispositivo', 'tb_dispositivo.id_dispositivo', '=', 'tb_relacion_camada_dispositivo.id_dispositivo')
+            ->where('tb_relacion_camada_dispositivo.id_camada', $camadaId)
+            ->whereNull('tb_relacion_camada_dispositivo.fecha_desvinculacion') // Solo activos
+            ->select([
+                'tb_dispositivo.id_dispositivo',
+                'tb_dispositivo.numero_serie',
+                'tb_dispositivo.ip_address',
+                'tb_relacion_camada_dispositivo.fecha_vinculacion'
+            ])
+            ->get();
 
-    // Filtrar dispositivos disponibles (los que NO están en la lista de ocupados)
-    $dispositivosDisponibles = $todosDispositivos->filter(function ($dispositivo) use ($dispositivosOcupados) {
-        return !in_array($dispositivo->id_dispositivo, $dispositivosOcupados);
-    })->values();
-
-    return response()->json([
-        'total' => $dispositivosDisponibles->count(),
-        'dispositivos' => $dispositivosDisponibles
-    ], Response::HTTP_OK);
-}
-
-/**
- * Obtiene dispositivos vinculados activamente a una camada específica
- * (tienen fecha_vinculacion pero NO fecha_desvinculacion)
- * 
- * @param int $camadaId
- * @return JsonResponse
- */
-public function getDispositivosVinculadosByCamada(int $camadaId): JsonResponse
-{
-    $camada = Camada::findOrFail($camadaId);
-
-    $dispositivos = Dispositivo::join('tb_relacion_camada_dispositivo', 'tb_dispositivo.id_dispositivo', '=', 'tb_relacion_camada_dispositivo.id_dispositivo')
-        ->where('tb_relacion_camada_dispositivo.id_camada', $camadaId)
-        ->whereNull('tb_relacion_camada_dispositivo.fecha_desvinculacion') // Solo activos
-        ->select([
-            'tb_dispositivo.id_dispositivo',
-            'tb_dispositivo.numero_serie',
-            'tb_dispositivo.ip_address',
-            'tb_relacion_camada_dispositivo.fecha_vinculacion'
-        ])
-        ->get();
-
-    return response()->json([
-        'total' => $dispositivos->count(),
-        'dispositivos' => $dispositivos
-    ], Response::HTTP_OK);
-}
-
-/**
- * Vincula un dispositivo a una camada usando la tabla de relación
- * 
- * @param int $camadaId
- * @param int $dispId
- * @return JsonResponse
- */
-public function attachDispositivo(int $camadaId, int $dispId): JsonResponse
-{
-    $camada = Camada::findOrFail($camadaId);
-    $dispositivo = Dispositivo::findOrFail($dispId);
-
-    // Verificar si ya existe una vinculación activa
-    $vinculacionActiva = DB::table('tb_relacion_camada_dispositivo')
-        ->where('id_camada', $camadaId)
-        ->where('id_dispositivo', $dispId)
-        ->whereNull('fecha_desvinculacion')
-        ->first();
-
-    if ($vinculacionActiva) {
         return response()->json([
-            'message' => 'El dispositivo ya está vinculado activamente a esta camada.'
-        ], Response::HTTP_CONFLICT);
+            'total' => $dispositivos->count(),
+            'dispositivos' => $dispositivos
+        ], Response::HTTP_OK);
     }
 
-    // Verificar si el dispositivo está ocupado por otra camada
-    $dispositivoOcupado = DB::table('tb_relacion_camada_dispositivo')
-        ->where('id_dispositivo', $dispId)
-        ->whereNull('fecha_desvinculacion')
-        ->first();
+    /**
+     * Vincula un dispositivo a una camada usando la tabla de relación
+     * 
+     * @param int $camadaId
+     * @param int $dispId
+     * @return JsonResponse
+     */
+    public function attachDispositivo(int $camadaId, int $dispId): JsonResponse
+    {
+        $camada = Camada::findOrFail($camadaId);
+        $dispositivo = Dispositivo::findOrFail($dispId);
 
-    if ($dispositivoOcupado) {
-        return response()->json([
-            'message' => 'El dispositivo está actualmente vinculado a otra camada.',
-            'camada_ocupante' => $dispositivoOcupado->id_camada
-        ], Response::HTTP_CONFLICT);
-    }
+        // Verificar si ya existe una vinculación activa
+        $vinculacionActiva = DB::table('tb_relacion_camada_dispositivo')
+            ->where('id_camada', $camadaId)
+            ->where('id_dispositivo', $dispId)
+            ->whereNull('fecha_desvinculacion')
+            ->first();
 
-    // Crear nueva vinculación
-    DB::table('tb_relacion_camada_dispositivo')->insert([
-        'id_camada' => $camadaId,
-        'id_dispositivo' => $dispId,
-        'fecha_vinculacion' => now(),
-        'fecha_desvinculacion' => null
-    ]);
+        if ($vinculacionActiva) {
+            return response()->json([
+                'message' => 'El dispositivo ya está vinculado activamente a esta camada.'
+            ], Response::HTTP_CONFLICT);
+        }
 
-    return response()->json([
-        'message' => "Dispositivo {$dispId} vinculado exitosamente a camada {$camadaId}.",
-        'vinculacion' => [
+        // Verificar si el dispositivo está ocupado por otra camada
+        $dispositivoOcupado = DB::table('tb_relacion_camada_dispositivo')
+            ->where('id_dispositivo', $dispId)
+            ->whereNull('fecha_desvinculacion')
+            ->first();
+
+        if ($dispositivoOcupado) {
+            return response()->json([
+                'message' => 'El dispositivo está actualmente vinculado a otra camada.',
+                'camada_ocupante' => $dispositivoOcupado->id_camada
+            ], Response::HTTP_CONFLICT);
+        }
+
+        // Crear nueva vinculación
+        DB::table('tb_relacion_camada_dispositivo')->insert([
             'id_camada' => $camadaId,
             'id_dispositivo' => $dispId,
-            'fecha_vinculacion' => now()
-        ]
-    ], Response::HTTP_CREATED);
-}
-
-/**
- * Desvincula un dispositivo de una camada estableciendo fecha_desvinculacion
- * 
- * @param int $camadaId
- * @param int $dispId
- * @return JsonResponse
- */
-public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
-{
-    $camada = Camada::findOrFail($camadaId);
-    $dispositivo = Dispositivo::findOrFail($dispId);
-
-    // Buscar vinculación activa
-    $vinculacion = DB::table('tb_relacion_camada_dispositivo')
-        ->where('id_camada', $camadaId)
-        ->where('id_dispositivo', $dispId)
-        ->whereNull('fecha_desvinculacion')
-        ->first();
-
-    if (!$vinculacion) {
-        return response()->json([
-            'message' => 'No existe una vinculación activa entre este dispositivo y la camada.'
-        ], Response::HTTP_NOT_FOUND);
-    }
-
-    // Establecer fecha de desvinculación
-    DB::table('tb_relacion_camada_dispositivo')
-        ->where('id_camada', $camadaId)
-        ->where('id_dispositivo', $dispId)
-        ->whereNull('fecha_desvinculacion')
-        ->update([
-            'fecha_desvinculacion' => now()
+            'fecha_vinculacion' => now(),
+            'fecha_desvinculacion' => null
         ]);
 
-    return response()->json([
-        'message' => "Dispositivo {$dispId} desvinculado exitosamente de camada {$camadaId}.",
-        'desvinculacion' => [
-            'id_camada' => $camadaId,
-            'id_dispositivo' => $dispId,
-            'fecha_desvinculacion' => now()
-        ]
-    ], Response::HTTP_OK);
-}
+        return response()->json([
+            'message' => "Dispositivo {$dispId} vinculado exitosamente a camada {$camadaId}.",
+            'vinculacion' => [
+                'id_camada' => $camadaId,
+                'id_dispositivo' => $dispId,
+                'fecha_vinculacion' => now()
+            ]
+        ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Desvincula un dispositivo de una camada estableciendo fecha_desvinculacion
+     * 
+     * @param int $camadaId
+     * @param int $dispId
+     * @return JsonResponse
+     */
+    public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
+    {
+        $camada = Camada::findOrFail($camadaId);
+        $dispositivo = Dispositivo::findOrFail($dispId);
+
+        // Buscar vinculación activa
+        $vinculacion = DB::table('tb_relacion_camada_dispositivo')
+            ->where('id_camada', $camadaId)
+            ->where('id_dispositivo', $dispId)
+            ->whereNull('fecha_desvinculacion')
+            ->first();
+
+        if (!$vinculacion) {
+            return response()->json([
+                'message' => 'No existe una vinculación activa entre este dispositivo y la camada.'
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        // Establecer fecha de desvinculación
+        DB::table('tb_relacion_camada_dispositivo')
+            ->where('id_camada', $camadaId)
+            ->where('id_dispositivo', $dispId)
+            ->whereNull('fecha_desvinculacion')
+            ->update([
+                'fecha_desvinculacion' => now()
+            ]);
+
+        return response()->json([
+            'message' => "Dispositivo {$dispId} desvinculado exitosamente de camada {$camadaId}.",
+            'desvinculacion' => [
+                'id_camada' => $camadaId,
+                'id_dispositivo' => $dispId,
+                'fecha_desvinculacion' => now()
+            ]
+        ], Response::HTTP_OK);
+    }
 
     /**
      * Devuelve un array de números de serie de los dispositivos vinculados.
@@ -951,7 +951,7 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
                 ];
             })
             ->groupBy('fecha')
-            ->map(fn ($items) => collect($items)->pluck('valor'));
+            ->map(fn($items) => collect($items)->pluck('valor'));
 
         $pesosTotales = collect();
         $resumenPorDia = [];
@@ -961,7 +961,7 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
             $fecha = $dia->format('Y-m-d');
             Log::info("Procesando día: {$fecha}");
 
-             // Buscar camada activa en memoria
+            // Buscar camada activa en memoria
             $camada = $camadas->first(function ($c) use ($fecha) {
                 $inicioCamada = Carbon::parse($c->fecha_hora_inicio)->format('Y-m-d');
                 $finCamada = $c->fecha_hora_final ? Carbon::parse($c->fecha_hora_final)->format('Y-m-d') : null;
@@ -3717,249 +3717,258 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
     {
         // 1. Validar parámetros
         $request->validate([
-            'fecha_inicio' => 'nullable|date',
-            'fecha_fin'    => 'nullable|date|after_or_equal:fecha_inicio',
+            'fecha_inicio' => 'required|date|before_or_equal:fecha_fin',
+            'fecha_fin'    => 'required|date',
         ]);
 
-        // Si solo se proporciona una fecha, usar esa fecha como único día
         $fechaInicio = $request->query('fecha_inicio');
-        $fechaFin = $request->query('fecha_fin', $fechaInicio);
-
-        // Si no se proporciona ninguna fecha, usar la fecha actual
-        if (!$fechaInicio) {
-            $fechaInicio = Carbon::now()->format('Y-m-d');
-            $fechaFin = $fechaInicio;
-        }
+        $fechaFin = $request->query('fecha_fin');
 
         // 2. Cargar dispositivo
         $dispositivo = Dispositivo::findOrFail($dispId);
         $serie = $dispositivo->numero_serie;
 
-        // 3. ID del sensor de actividad
-        $SENSOR_ACTIVIDAD = 3;
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 3. PARÁMETROS DEL ALGORITMO DE VENTANAS (CONFIGURABLES)
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        // 4. Obtener lecturas de actividad para el rango de fechas
+        $SENSOR_MOVIMIENTO = 6;
+
+        // PARÁMETRO 1: Tamaño de la ventana temporal
+        $TAMANIO_VENTANA_SEGUNDOS = 60; // 1 minuto por ventana
+
+        // PARÁMETRO 2: Mínimo de detecciones de actividad (valor=1) para considerar la ventana como "activa"
+        $MIN_DETECCIONES_POR_VENTANA = 3; // Al menos 3 lecturas con valor=1
+
+        // PARÁMETRO 3: Porcentaje mínimo de actividad en la ventana (alternativa o complemento al anterior)
+        $PORCENTAJE_MINIMO_ACTIVIDAD = 50; // Al menos 50% de las lecturas deben ser valor=1
+
+        // PARÁMETRO 4: Mínimo de ventanas activas consecutivas para formar un período
+        $MIN_VENTANAS_CONSECUTIVAS = 2; // Al menos 2 minutos consecutivos activos
+
+        // PARÁMETRO 5: Máximo de ventanas inactivas permitidas dentro de un período
+        $MAX_VENTANAS_INACTIVAS_PERMITIDAS = 2; // Permite hasta 2 minutos de inactividad dentro de un período
+
+        // PARÁMETRO 6: Duración máxima de un período en ventanas
+        $MAX_VENTANAS_POR_PERIODO = 60; // Máximo 60 minutos (1 hora) por período
+
+        Log::info("=== ALGORITMO DE VENTANAS TEMPORALES ===", [
+            'dispositivo' => $serie,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'parametros' => [
+                'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
+                'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
+                'porcentaje_minimo' => $PORCENTAJE_MINIMO_ACTIVIDAD,
+                'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
+                'max_ventanas_inactivas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
+                'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
+            ]
+        ]);
+
+        // 4. Obtener TODAS las lecturas del sensor de movimiento
         $lecturas = EntradaDato::where('id_dispositivo', $serie)
-            ->where('id_sensor', $SENSOR_ACTIVIDAD)
+            ->where('id_sensor', $SENSOR_MOVIMIENTO)
             ->whereBetween('fecha', [$fechaInicio . ' 00:00:00', $fechaFin . ' 23:59:59'])
-            ->orderBy('fecha')
-            ->get(['valor', 'fecha']);
+            ->orderBy('fecha', 'asc')
+            ->select('fecha', 'valor')
+            ->get();
 
         if ($lecturas->isEmpty()) {
             return response()->json([
-                'mensaje' => 'No se encontraron lecturas de actividad para el rango de fechas especificado',
-                'dispositivo' => [
-                    'id' => $dispId,
-                    'numero_serie' => $serie
-                ],
-                'periodo' => [
-                    'fecha_inicio' => $fechaInicio,
-                    'fecha_fin' => $fechaFin
-                ]
+                'mensaje' => 'No se encontraron lecturas de movimiento',
+                'dispositivo' => ['id' => $dispId, 'numero_serie' => $serie],
+                'periodo' => ['fecha_inicio' => $fechaInicio, 'fecha_fin' => $fechaFin]
             ], Response::HTTP_OK);
         }
 
-        // 5. Procesar las lecturas para determinar los periodos de actividad
-        $periodosActividad = [];
-        $inicioActividad = null;
-        $finActividad = null;
-        $actividadExtendida = false;
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 5. PASO 1: AGRUPAR LECTURAS EN VENTANAS TEMPORALES
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        // Función para agregar un periodo completado a la lista
-        $agregarPeriodo = function ($inicio, $fin) use (&$periodosActividad) {
-            if ($inicio && $fin) {
-                $duracion = Carbon::parse($inicio)->diffInSeconds(Carbon::parse($fin));
-                $periodosActividad[] = [
-                    'inicio' => $inicio,
-                    'fin' => $fin,
-                    'duracion_segundos' => $duracion
+        $ventanas = [];
+
+        foreach ($lecturas as $lectura) {
+            $timestamp = Carbon::parse($lectura->fecha);
+
+            // Calcular el inicio de la ventana (redondear al minuto anterior)
+            $inicioVentana = $timestamp->copy()->startOfMinute();
+            $keyVentana = $inicioVentana->format('Y-m-d H:i:00');
+
+            // Crear ventana si no existe
+            if (!isset($ventanas[$keyVentana])) {
+                $ventanas[$keyVentana] = [
+                    'inicio' => $keyVentana,
+                    'fin' => $inicioVentana->copy()->addSeconds($TAMANIO_VENTANA_SEGUNDOS)->format('Y-m-d H:i:s'),
+                    'lecturas' => [],
+                    'total_lecturas' => 0,
+                    'lecturas_actividad' => 0,
+                    'lecturas_inactividad' => 0
                 ];
             }
-        };
 
-        foreach ($lecturas as $index => $lectura) {
-            $fechaActual = Carbon::parse($lectura->fecha);
-            $valor = (int)$lectura->valor;
+            // Agregar lectura a la ventana
+            $ventanas[$keyVentana]['lecturas'][] = [
+                'fecha' => $lectura->fecha,
+                'valor' => (int)$lectura->valor
+            ];
+            $ventanas[$keyVentana]['total_lecturas']++;
 
-            // Si encontramos un 1 (actividad)
-            if ($valor === 1) {
-                // Si no hay periodo activo, iniciamos uno nuevo
-                if ($inicioActividad === null) {
-                    $inicioActividad = $lectura->fecha;
-                    $finActividad = Carbon::parse($lectura->fecha)->addMinute()->format('Y-m-d H:i:s');
-                }
-                // Si ya hay un periodo activo, extendemos su duración
-                else {
-                    $finActividad = max($finActividad, Carbon::parse($lectura->fecha)->addMinute()->format('Y-m-d H:i:s'));
-                }
-                $actividadExtendida = true;
-            }
-            // Si encontramos un 0 (inactividad)
-            else {
-                // Solo procesamos el 0 si ya pasó el tiempo de gracia del último 1
-                if ($inicioActividad !== null && $fechaActual > Carbon::parse($finActividad)) {
-                    $agregarPeriodo($inicioActividad, $finActividad);
-                    $inicioActividad = null;
-                    $finActividad = null;
-                    $actividadExtendida = false;
-                }
-            }
-
-            // Si es la última lectura y hay un periodo activo pendiente
-            if ($index === $lecturas->count() - 1 && $inicioActividad !== null) {
-                $agregarPeriodo($inicioActividad, $finActividad);
+            if ((int)$lectura->valor === 1) {
+                $ventanas[$keyVentana]['lecturas_actividad']++;
+            } else {
+                $ventanas[$keyVentana]['lecturas_inactividad']++;
             }
         }
 
-        // 6. Calcular estadísticas de actividad
+        Log::info("Total de ventanas creadas: " . count($ventanas));
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 6. PASO 2: CLASIFICAR CADA VENTANA COMO "ACTIVA" o "INACTIVA"
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        $ventanasClasificadas = [];
+
+        foreach ($ventanas as $keyVentana => $ventana) {
+            // Calcular porcentaje de actividad
+            $porcentajeActividad = $ventana['total_lecturas'] > 0
+                ? ($ventana['lecturas_actividad'] / $ventana['total_lecturas']) * 100
+                : 0;
+
+            // Determinar si la ventana está ACTIVA usando AMBOS criterios
+            $esActiva = (
+                $ventana['lecturas_actividad'] >= $MIN_DETECCIONES_POR_VENTANA
+                and
+                $porcentajeActividad >= $PORCENTAJE_MINIMO_ACTIVIDAD
+            );
+
+            $ventanasClasificadas[$keyVentana] = [
+                'inicio' => $ventana['inicio'],
+                'fin' => $ventana['fin'],
+                'activa' => $esActiva,
+                'total_lecturas' => $ventana['total_lecturas'],
+                'lecturas_actividad' => $ventana['lecturas_actividad'],
+                'porcentaje_actividad' => round($porcentajeActividad, 1)
+            ];
+
+            Log::debug("Ventana {$keyVentana}: " . ($esActiva ? 'ACTIVA' : 'INACTIVA') .
+                " ({$ventana['lecturas_actividad']}/{$ventana['total_lecturas']} = {$porcentajeActividad}%)");
+        }
+
+        // Ordenar ventanas por fecha
+        ksort($ventanasClasificadas);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 7. PASO 3: AGRUPAR VENTANAS ACTIVAS EN PERÍODOS
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        $periodosActividad = [];
+        $ventanasPeriodoActual = [];
+        $ventanasInactivasEnPeriodo = 0;
+
+        foreach ($ventanasClasificadas as $ventana) {
+
+            // ─────────────────────────────────────────────────────────────────
+            // CASO 1: La ventana está ACTIVA
+            // ─────────────────────────────────────────────────────────────────
+            if ($ventana['activa']) {
+                // Agregar ventana al período actual
+                $ventanasPeriodoActual[] = $ventana;
+                $ventanasInactivasEnPeriodo = 0; // Resetear contador de inactivas
+
+                // ✅ RESTRICCIÓN: Verificar duración máxima del período
+                if (count($ventanasPeriodoActual) >= $MAX_VENTANAS_POR_PERIODO) {
+                    Log::debug("Máximo de ventanas alcanzado, finalizando período");
+
+                    $this->finalizarPeriodoVentanas(
+                        $periodosActividad,
+                        $ventanasPeriodoActual,
+                        $MIN_VENTANAS_CONSECUTIVAS
+                    );
+
+                    // Iniciar nuevo período con la ventana actual
+                    $ventanasPeriodoActual = [$ventana];
+                    $ventanasInactivasEnPeriodo = 0;
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────
+            // CASO 2: La ventana está INACTIVA
+            // ─────────────────────────────────────────────────────────────────
+            else {
+                // Si hay un período activo en curso
+                if (!empty($ventanasPeriodoActual)) {
+                    $ventanasInactivasEnPeriodo++;
+
+                    // ✅ RESTRICCIÓN: Verificar ventanas inactivas consecutivas
+                    if ($ventanasInactivasEnPeriodo > $MAX_VENTANAS_INACTIVAS_PERMITIDAS) {
+                        Log::debug("Máximo de ventanas inactivas alcanzado, finalizando período");
+
+                        // Finalizar período (sin incluir las ventanas inactivas)
+                        $this->finalizarPeriodoVentanas(
+                            $periodosActividad,
+                            $ventanasPeriodoActual,
+                            $MIN_VENTANAS_CONSECUTIVAS
+                        );
+
+                        // Resetear
+                        $ventanasPeriodoActual = [];
+                        $ventanasInactivasEnPeriodo = 0;
+                    } else {
+                        // Permitir ventanas inactivas dentro del período (crear "huecos")
+                        $ventanasPeriodoActual[] = $ventana;
+                    }
+                }
+            }
+        }
+
+        // Finalizar último período si existe
+        if (!empty($ventanasPeriodoActual)) {
+            $this->finalizarPeriodoVentanas(
+                $periodosActividad,
+                $ventanasPeriodoActual,
+                $MIN_VENTANAS_CONSECUTIVAS
+            );
+        }
+
+        Log::info("Períodos detectados: " . count($periodosActividad));
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 8. CALCULAR ESTADÍSTICAS GLOBALES
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         $totalLecturas = $lecturas->count();
         $totalActivas = $lecturas->where('valor', 1)->count();
 
-        // Calcular duración total del periodo analizado en segundos
-        $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
+        $totalVentanas = count($ventanasClasificadas);
+        $ventanasActivas = collect($ventanasClasificadas)->where('activa', true)->count();
 
-        // Calcular tiempo total de actividad en segundos
+        $duracionTotalSegundos = Carbon::parse($fechaInicio . ' 00:00:00')
+            ->diffInSeconds(Carbon::parse($fechaFin . ' 23:59:59')) + 1;
+
         $tiempoActividadTotal = collect($periodosActividad)->sum('duracion_segundos');
 
-        // Convertir a horas, minutos y segundos
+        $porcentajeActividad = $duracionTotalSegundos > 0
+            ? round(($tiempoActividadTotal / $duracionTotalSegundos) * 100, 2)
+            : 0;
+
+        $porcentajeInactividad = round(100 - $porcentajeActividad, 2);
+
+        // Convertir a formato legible
         $horasActividad = floor($tiempoActividadTotal / 3600);
         $minutosActividad = floor(($tiempoActividadTotal % 3600) / 60);
         $segundosActividad = $tiempoActividadTotal % 60;
 
-        // Calcular porcentajes
-        $porcentajeActividad = round(($tiempoActividadTotal / $duracionTotalSegundos) * 100, 2);
-        $porcentajeInactividad = round(100 - $porcentajeActividad, 2);
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 9. CALCULAR ACTIVIDAD POR HORA Y RESUMEN DIARIO
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        // 7. Preparar resumen diario si hay más de un día
-        $resumenDiario = [];
-        if ($fechaInicio !== $fechaFin) {
-            $periodo = CarbonPeriod::create($fechaInicio, $fechaFin);
+        $actividadPorHora = $this->calcularActividadPorHora($periodosActividad);
+        $resumenDiario = $this->calcularResumenDiario($periodosActividad, $fechaInicio, $fechaFin);
 
-            foreach ($periodo as $dia) {
-                $fechaDia = $dia->format('Y-m-d');
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // 10. PREPARAR RESPUESTA
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-                // Filtrar periodos de actividad para este día
-                $periodosDelDia = collect($periodosActividad)->filter(function ($periodo) use ($fechaDia) {
-                    $inicioDia = Carbon::parse($periodo['inicio'])->format('Y-m-d');
-                    $finDia = Carbon::parse($periodo['fin'])->format('Y-m-d');
-
-                    // Si el periodo cruza días, debemos considerar solo la parte que corresponde a este día
-                    return ($inicioDia <= $fechaDia && $finDia >= $fechaDia);
-                });
-
-                // Calcular tiempo de actividad para este día
-                $tiempoActividadDia = 0;
-
-                foreach ($periodosDelDia as $periodo) {
-                    $inicioEnDia = max(Carbon::parse($periodo['inicio']), Carbon::parse($fechaDia . ' 00:00:00'));
-                    $finEnDia = min(Carbon::parse($periodo['fin']), Carbon::parse($fechaDia . ' 23:59:59'));
-
-                    $tiempoActividadDia += $inicioEnDia->diffInSeconds($finEnDia);
-                }
-
-                // Calcular porcentaje para este día
-                $duracionDiaSegundos = 86400; // 24 horas en segundos
-                $porcentajeActividadDia = round(($tiempoActividadDia / $duracionDiaSegundos) * 100, 2);
-
-                $resumenDiario[] = [
-                    'fecha' => $fechaDia,
-                    'tiempo_actividad_segundos' => $tiempoActividadDia,
-                    'tiempo_actividad_formateado' => sprintf(
-                        '%02d:%02d:%02d',
-                        floor($tiempoActividadDia / 3600),
-                        floor(($tiempoActividadDia % 3600) / 60),
-                        $tiempoActividadDia % 60
-                    ),
-                    'porcentaje_actividad' => $porcentajeActividadDia,
-                    'porcentaje_inactividad' => round(100 - $porcentajeActividadDia, 2)
-                ];
-            }
-        }
-
-        // 8. Preparar distribución de actividad por hora
-        $actividadPorHora = [];
-        for ($hora = 0; $hora < 24; $hora++) {
-            $horaFormateada = str_pad($hora, 2, '0', STR_PAD_LEFT);
-            $actividadPorHora[$horaFormateada] = 0;
-        }
-
-        // Calcular segundos de actividad por hora
-        foreach ($periodosActividad as $periodo) {
-            $inicio = Carbon::parse($periodo['inicio']);
-            $fin = Carbon::parse($periodo['fin']);
-
-            // Si inicio y fin están en la misma hora
-            if ($inicio->format('H') === $fin->format('H')) {
-                $hora = $inicio->format('H');
-                $actividadPorHora[$hora] += $inicio->diffInSeconds($fin);
-            }
-            // Si cruzan horas diferentes
-            else {
-                $periodoHora = clone $inicio;
-                $periodoHora->minute(0)->second(0);
-
-                // Para cada hora entre inicio y fin
-                while ($periodoHora->format('YmdH') <= $fin->format('YmdH')) {
-                    $hora = $periodoHora->format('H');
-
-                    // Para la primera hora (puede ser parcial)
-                    if ($periodoHora->format('YmdH') === $inicio->format('YmdH')) {
-                        $finHora = (clone $periodoHora)->addHour();
-                        $actividadPorHora[$hora] += $inicio->diffInSeconds(min($finHora, $fin));
-                    }
-                    // Para la última hora (puede ser parcial)
-                    elseif ($periodoHora->format('YmdH') === $fin->format('YmdH')) {
-                        $actividadPorHora[$hora] += $periodoHora->diffInSeconds($fin);
-                    }
-                    // Para horas completas en medio
-                    elseif ($periodoHora > $inicio && $periodoHora->addHour() < $fin) {
-                        $actividadPorHora[$hora] += 3600; // 1 hora completa
-                    }
-
-                    $periodoHora->addHour();
-                }
-            }
-        }
-
-        // Convertir segundos a minutos por hora y calcular porcentajes
-        $actividadPorHoraFormateada = [];
-        foreach ($actividadPorHora as $hora => $segundos) {
-            $minutos = round($segundos / 60, 1);
-            $porcentaje = round(($segundos / 3600) * 100, 1);
-
-            $actividadPorHoraFormateada[] = [
-                'hora' => $hora,
-                'minutos_actividad' => $minutos,
-                'porcentaje' => $porcentaje
-            ];
-        }
-
-        // 9. Preparar las medidas filtradas (eliminar 0s dentro del periodo de actividad)
-        $medidasFiltradas = [];
-        $ultimaMedidaActiva = null;
-
-        foreach ($lecturas as $lectura) {
-            $valor = (int)$lectura->valor;
-            $fechaLectura = Carbon::parse($lectura->fecha);
-
-            // Si es una lectura de actividad, siempre la incluimos
-            if ($valor === 1) {
-                $medidasFiltradas[] = [
-                    'fecha' => $lectura->fecha,
-                    'valor' => $valor
-                ];
-                $ultimaMedidaActiva = $fechaLectura;
-            }
-            // Si es inactividad, solo la incluimos si no estamos en periodo extendido
-            elseif ($ultimaMedidaActiva === null || $fechaLectura > $ultimaMedidaActiva->copy()->addMinute()) {
-                $medidasFiltradas[] = [
-                    'fecha' => $lectura->fecha,
-                    'valor' => $valor
-                ];
-            }
-        }
-
-        // 10. Preparar respuesta completa
         return response()->json([
             'dispositivo' => [
                 'id' => $dispId,
@@ -3970,19 +3979,179 @@ public function detachDispositivo(int $camadaId, int $dispId): JsonResponse
                 'fecha_fin' => $fechaFin,
                 'duracion_total_segundos' => $duracionTotalSegundos
             ],
+            'configuracion_algoritmo' => [
+                'metodo' => 'ventanas_temporales',
+                'ventana_segundos' => $TAMANIO_VENTANA_SEGUNDOS,
+                'min_detecciones_por_ventana' => $MIN_DETECCIONES_POR_VENTANA,
+                'porcentaje_minimo_actividad' => $PORCENTAJE_MINIMO_ACTIVIDAD,
+                'min_ventanas_consecutivas' => $MIN_VENTANAS_CONSECUTIVAS,
+                'max_ventanas_inactivas_permitidas' => $MAX_VENTANAS_INACTIVAS_PERMITIDAS,
+                'max_ventanas_por_periodo' => $MAX_VENTANAS_POR_PERIODO
+            ],
+            'estadisticas_ventanas' => [
+                'total_ventanas' => $totalVentanas,
+                'ventanas_activas' => $ventanasActivas,
+                'ventanas_inactivas' => $totalVentanas - $ventanasActivas,
+                'porcentaje_ventanas_activas' => round(($ventanasActivas / $totalVentanas) * 100, 2)
+            ],
             'resumen_actividad' => [
                 'tiempo_total_segundos' => $tiempoActividadTotal,
                 'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horasActividad, $minutosActividad, $segundosActividad),
                 'porcentaje_actividad' => $porcentajeActividad,
                 'porcentaje_inactividad' => $porcentajeInactividad,
                 'total_lecturas' => $totalLecturas,
-                'lecturas_actividad' => $totalActivas
+                'lecturas_actividad' => $totalActivas,
+                'numero_periodos' => count($periodosActividad)
             ],
             'periodos_actividad' => $periodosActividad,
-            'resumen_diario' => $resumenDiario,
-            'actividad_por_hora' => $actividadPorHoraFormateada,
-            'medidas_filtradas' => $medidasFiltradas
+            'actividad_por_hora' => $actividadPorHora,
+            'resumen_diario' => $resumenDiario
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Finaliza un período de ventanas y lo agrega a la lista si cumple los requisitos
+     */
+    private function finalizarPeriodoVentanas(
+        array &$periodosActividad,
+        array $ventanasPeriodo,
+        int $minVentanasConsecutivas
+    ): void {
+        if (empty($ventanasPeriodo)) {
+            return;
+        }
+
+        // Contar solo las ventanas activas
+        $ventanasActivas = collect($ventanasPeriodo)->where('activa', true)->count();
+
+        // Verificar que cumple el mínimo de ventanas activas
+        if ($ventanasActivas < $minVentanasConsecutivas) {
+            Log::debug("Período descartado: solo {$ventanasActivas} ventanas activas (mínimo: {$minVentanasConsecutivas})");
+            return;
+        }
+
+        $primeraVentana = reset($ventanasPeriodo);
+        $ultimaVentana = end($ventanasPeriodo);
+
+        $inicio = Carbon::parse($primeraVentana['inicio']);
+        $fin = Carbon::parse($ultimaVentana['fin']);
+        $duracion = $inicio->diffInSeconds($fin);
+
+        // Calcular estadísticas del período
+        $totalLecturas = collect($ventanasPeriodo)->sum('total_lecturas');
+        $lecturasActividad = collect($ventanasPeriodo)->sum('lecturas_actividad');
+
+        $periodosActividad[] = [
+            'inicio' => $inicio->format('Y-m-d H:i:s'),
+            'fin' => $fin->format('Y-m-d H:i:s'),
+            'duracion_segundos' => $duracion,
+            'numero_ventanas' => count($ventanasPeriodo),
+            'ventanas_activas' => $ventanasActivas,
+            'ventanas_inactivas' => count($ventanasPeriodo) - $ventanasActivas,
+            'total_lecturas' => $totalLecturas,
+            'lecturas_actividad' => $lecturasActividad,
+            'porcentaje_actividad' => $totalLecturas > 0
+                ? round(($lecturasActividad / $totalLecturas) * 100, 1)
+                : 0
+        ];
+
+        Log::info("Período finalizado", [
+            'inicio' => $inicio->format('H:i:s'),
+            'fin' => $fin->format('H:i:s'),
+            'duracion' => round($duracion / 60, 1) . ' min',
+            'ventanas' => count($ventanasPeriodo),
+            'activas' => $ventanasActivas
+        ]);
+    }
+
+    /**
+     * Calcula la distribución de actividad por hora
+     */
+    private function calcularActividadPorHora(array $periodosActividad): array
+    {
+        $actividadPorHora = array_fill_keys(
+            array_map(fn($h) => str_pad($h, 2, '0', STR_PAD_LEFT), range(0, 23)),
+            0
+        );
+
+        foreach ($periodosActividad as $periodo) {
+            $inicio = Carbon::parse($periodo['inicio']);
+            $fin = Carbon::parse($periodo['fin']);
+
+            $horaActual = $inicio->copy()->startOfHour();
+
+            while ($horaActual <= $fin) {
+                $hora = $horaActual->format('H');
+                $inicioHora = max($horaActual, $inicio);
+                $finHora = min($horaActual->copy()->endOfHour(), $fin);
+
+                $segundos = $inicioHora->diffInSeconds($finHora);
+                $actividadPorHora[$hora] += $segundos;
+
+                $horaActual->addHour();
+            }
+        }
+
+        $resultado = [];
+        foreach ($actividadPorHora as $hora => $segundos) {
+            $resultado[] = [
+                'hora' => $hora,
+                'minutos_actividad' => round($segundos / 60, 1),
+                'porcentaje' => round(($segundos / 3600) * 100, 1)
+            ];
+        }
+
+        return $resultado;
+    }
+
+    /**
+     * Calcula resumen diario de actividad
+     */
+    private function calcularResumenDiario(array $periodosActividad, string $fechaInicio, string $fechaFin): array
+    {
+        $inicio = Carbon::parse($fechaInicio);
+        $fin = Carbon::parse($fechaFin);
+        $periodo = CarbonPeriod::create($inicio, $fin);
+
+        $resumen = [];
+
+        foreach ($periodo as $dia) {
+            $fechaDia = $dia->format('Y-m-d');
+
+            $periodosDelDia = collect($periodosActividad)->filter(function ($periodo) use ($fechaDia) {
+                $inicioDia = Carbon::parse($periodo['inicio'])->format('Y-m-d');
+                $finDia = Carbon::parse($periodo['fin'])->format('Y-m-d');
+                return ($inicioDia <= $fechaDia && $finDia >= $fechaDia);
+            });
+
+            $tiempoActividad = 0;
+            foreach ($periodosDelDia as $periodo) {
+                $inicioEnDia = max(
+                    Carbon::parse($periodo['inicio']),
+                    Carbon::parse($fechaDia . ' 00:00:00')
+                );
+                $finEnDia = min(
+                    Carbon::parse($periodo['fin']),
+                    Carbon::parse($fechaDia . ' 23:59:59')
+                );
+
+                $tiempoActividad += $inicioEnDia->diffInSeconds($finEnDia);
+            }
+
+            $horas = floor($tiempoActividad / 3600);
+            $minutos = floor(($tiempoActividad % 3600) / 60);
+            $segundos = $tiempoActividad % 60;
+
+            $resumen[] = [
+                'fecha' => $fechaDia,
+                'tiempo_actividad_segundos' => $tiempoActividad,
+                'tiempo_formateado' => sprintf('%02d:%02d:%02d', $horas, $minutos, $segundos),
+                'porcentaje' => round(($tiempoActividad / 86400) * 100, 2),
+                'numero_periodos' => $periodosDelDia->count()
+            ];
+        }
+
+        return $resumen;
     }
 
     /**
