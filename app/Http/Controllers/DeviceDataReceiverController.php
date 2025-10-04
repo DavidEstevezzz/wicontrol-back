@@ -49,7 +49,7 @@ class DeviceDataReceiverController extends Controller
         
         Log::channel('device_receiver')->info('Query String RAW: ' . $finalQueryString);
         
-        // IMPORTANTE: Decodificar URL encoding (navegadores lo encodean automáticamente)
+        // IMPORTANTE: Decodificar URL encoding 
         $finalQueryString = urldecode($finalQueryString);
         
         Log::channel('device_receiver')->info('Query String decoded: ' . $finalQueryString);
@@ -62,11 +62,10 @@ class DeviceDataReceiverController extends Controller
         
         Log::channel('device_receiver')->info('Query string procesada correctamente, longitud: ' . strlen($finalQueryString));
         
-        // Separar por @ para múltiples registros - IGUAL QUE EL ORIGINAL
+        // Separar por @ para múltiples registros 
         $array = explode('@', $finalQueryString);
         $fallo = false;
         
-        // No usar transacciones para replicar el comportamiento original
         try {
             foreach ($array as $valor) {
                 // Saltar elementos vacíos
@@ -84,8 +83,7 @@ class DeviceDataReceiverController extends Controller
                     
                     Log::channel('device_receiver')->info('Procesando dispositivo: ' . $dispositivo);
                     
-                    // En el código original no valida la existencia del dispositivo
-                    // Solo lo usa directamente, así que replicamos ese comportamiento
+
                     if (!$dispositivo) {
                         Log::channel('device_receiver')->warning('Dispositivo no especificado');
                         $fallo = true;
@@ -122,7 +120,7 @@ class DeviceDataReceiverController extends Controller
                                 $fechaFormateada = str_replace('-', ' ', $timestamp);
                                 
                                 try {
-                                    // Usar query directa para replicar exactamente el comportamiento original
+                                    // Usar query directa
                                     $sql = "INSERT INTO `tb_entrada_dato`(`id_sensor`,`valor`,`fecha`,`id_dispositivo`,`alta`) VALUES (?,?,STR_TO_DATE(?,'%d/%m/%Y %H:%i:%s'),?,1)";
                                     
                                     $result = DB::insert($sql, [
