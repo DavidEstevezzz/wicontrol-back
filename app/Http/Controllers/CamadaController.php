@@ -205,13 +205,31 @@ class CamadaController extends Controller
             ], Response::HTTP_CONFLICT);
         }
 
-        // Crear nueva vinculación
-        DB::table('tb_relacion_camada_dispositivo')->insert([
-            'id_camada' => $camadaId,
-            'id_dispositivo' => $dispId,
-            'fecha_vinculacion' => now(),
-            'fecha_desvinculacion' => null
-        ]);
+        // Reactivar una relación histórica si ya existía y estaba cerrada
+        $relacionHistorica = DB::table('tb_relacion_camada_dispositivo')
+            ->where('id_camada', $camadaId)
+            ->where('id_dispositivo', $dispId)
+            ->whereNotNull('fecha_desvinculacion')
+            ->orderByDesc('fecha_vinculacion')
+            ->first();
+
+        if ($relacionHistorica) {
+            DB::table('tb_relacion_camada_dispositivo')
+                ->where('id_camada', $camadaId)
+                ->where('id_dispositivo', $dispId)
+                ->update([
+                    'fecha_vinculacion' => now(),
+                    'fecha_desvinculacion' => null
+                ]);
+        } else {
+            // Crear nueva vinculación
+            DB::table('tb_relacion_camada_dispositivo')->insert([
+                'id_camada' => $camadaId,
+                'id_dispositivo' => $dispId,
+                'fecha_vinculacion' => now(),
+                'fecha_desvinculacion' => null
+            ]);
+        }
 
         return response()->json([
             'message' => "Dispositivo {$dispId} vinculado exitosamente a camada {$camadaId}.",
