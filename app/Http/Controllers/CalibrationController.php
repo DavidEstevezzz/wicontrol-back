@@ -198,56 +198,44 @@ class CalibrationController extends Controller
                     ->header('Content-Type', 'text/plain');
 
             case 4:
-                // 1) Sólo lee el peso original, antes de cualquier update
+                // UMBRAL DE TOLERANCIA: valores menores a esto se consideran "sin peso"
+                define('PESO_THRESHOLD', 2.0); // Ajusta según tu sensor
+
                 $pesoOriginal = $disp->pesoCalibracion;
 
                 if ($err == 0) {
-                    // 2) Actualiza estado igual que el PHP puro
                     $disp->update([
                         'calibrado'      => 4,
                         'runCalibracion' => 0,
                         'errorCalib'     => 0,
                     ]);
 
-                    // 3) Recarga para estar seguros (aunque no cambiamos pesoCalibracion)
                     $disp->refresh();
 
-                    // 4) Decide el siguiente paso según el peso que tenía el dispositivo
+                    // Verificar si el valor actual del sensor está cerca de cero
+                    $valorActual = abs($val); // Usar valor absoluto
+
                     if ($pesoOriginal == 0) {
-                        // Si peso era 0, salta directamente al paso 5
-                        $out = [
-                            'dev' => $dev,
-                            'ste' => 5,
-                            'val' => 0,
-                            'abo' => 0,
-                        ];
-                        $log->info("Step 4 → 5 (no había peso): " . json_encode($out));
+                        // Caso 1: No había peso configurado, saltar a step 5
+                        $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 0];
+                        $log->info("Step 4 → 5 (no había peso configurado): " . json_encode($out));
+                    } elseif ($valorActual < PESO_THRESHOLD) {
+                        // Caso 2: Peso retirado (valor muy cercano a cero)
+                        $out = ['dev' => $dev, 'ste' => 5, 'val' => 0, 'abo' => 0];
+                        $log->info("Step 4 → 5 (peso retirado, val={$valorActual}): " . json_encode($out));
                     } else {
-                        // Si peso > 0, espera que el usuario retire el peso
-                        $out = [
-                            'dev' => $dev,
-                            'ste' => 4,
-                            'val' => 0,
-                            'abo' => 0,
-                        ];
-                        $log->info("Step 4: esperando que usuario retire peso: " . json_encode($out));
+                        // Caso 3: Todavía hay peso, seguir esperando
+                        $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 0];
+                        $log->info("Step 4: esperando retirada de peso (val={$valorActual}): " . json_encode($out));
                     }
                 } else {
-                    // 5) Si hay error, lo guardas y abortas
                     $disp->update(['errorCalib' => $err]);
-                    $out = [
-                        'dev' => $dev,
-                        'ste' => 4,
-                        'val' => 0,
-                        'abo' => 1,
-                    ];
-                    $log->error("Step 4 error calibrando con peso ({$err}), abortando: " . json_encode($out));
+                    $out = ['dev' => $dev, 'ste' => 4, 'val' => 0, 'abo' => 1];
+                    $log->error("Step 4 error ({$err}), abortando: " . json_encode($out));
                 }
 
-                // 6) Devuelve la respuesta siempre envuelta en @…@
                 return response('@' . json_encode($out) . '@', 200)
                     ->header('Content-Type', 'text/plain');
-
 
             case 5:
                 if ($err === 0) {
