@@ -25,7 +25,6 @@ use App\Http\Controllers\CalibrationController;
 use App\Http\Controllers\HeartbeatController;
 use App\Http\Controllers\DeviceLogsController;
 use Illuminate\Support\Facades\Log;
-use Throwable;
 use Illuminate\Support\Facades\DB;
 
 
