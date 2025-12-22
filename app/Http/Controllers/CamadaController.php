@@ -536,15 +536,13 @@ class CamadaController extends Controller
             ], Response::HTTP_OK);
         }
 
-        // 5. ✅ APLICAR AGRUPACIÓN POR DISPOSITIVO (COMENTADO - SIN AGRUPACIÓN)
-        // $lecturasPorDispositivo = $lecturasOriginales->groupBy('id_dispositivo');
-        // $lecturasAgrupadas = collect();
-        // foreach ($lecturasPorDispositivo as $dispositivo => $lecturas) {
-        //     $lecturasAgrupadasDispositivo = $this->agruparPesadasConsecutivas($lecturas);
-        //     $lecturasAgrupadas = $lecturasAgrupadas->merge($lecturasAgrupadasDispositivo);
-        // }
-
-        $lecturasAgrupadas = $lecturasOriginales;
+        $lecturasPorDispositivo = $lecturasOriginales->groupBy('id_dispositivo');
+        $lecturasAgrupadas = collect();
+        foreach ($lecturasPorDispositivo as $dispositivo => $lecturas) {
+            $lecturasAgrupadasDispositivo = $this->agruparPesadasConsecutivas($lecturas);
+            $lecturasAgrupadas = $lecturasAgrupadas->merge($lecturasAgrupadasDispositivo);
+        }
+        
 
         // 6. Calcular edad y peso de referencia
         $edadDias = $camadaData['fecha_hora_inicio']->diffInDays($fecha);
